@@ -14,6 +14,11 @@
 #endif
 #include "duckdb_extension_v2.h"
 DUCKDB_EXTENSION_EXTERN
+#include <stdlib.h>
+#define SHIM_KIND "bridge+capabilities"
+static const char *const SHIM_CAPABILITIES[] = {"connections/1", "context_query: SQL on a connection of its own to the database of a callback's context", "interrupts/1", "context_interrupted: whether the query of a context was interrupted (Ctrl-C, max_execution_time)"};
+#define SHIM_CAPABILITIES_EMPTY 0
+#include "shim_tables.h"
 #include "shim_extra.h"
 #include <dlfcn.h>
 #include <stdio.h>
@@ -196,6 +201,7 @@ static void register_load_extension(duckdb_v2_extension_handle extension, duckdb
 
 DUCKDB_EXTENSION_ENTRYPOINT(duckdb_v2_extension_handle extension, duckdb_v2_context_handle context,
                             duckdb_v2_error_info_handle *err) {
+	shim_register_info(extension, context);
 	register_load_extension(extension, context);
 	shim_describe_self(context, DUCKDB_EXTENSION_STR(DUCKDB_EXTENSION_NAME), SHIM_CONTRACT_VERSION);
 	const char *path = getenv("V2_CAPI_SHIM_LOAD");

@@ -12,6 +12,11 @@
 #endif
 #include "duckdb_extension_v2.h"
 DUCKDB_EXTENSION_EXTERN
+#include <stdlib.h>
+#define SHIM_KIND "bridge"
+static const char *const SHIM_CAPABILITIES[] = {"", ""};
+#define SHIM_CAPABILITIES_EMPTY 1
+#include "shim_tables.h"
 #include <dlfcn.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -52,6 +57,7 @@ static void report(duckdb_v2_error_info_handle *err, const char *what, const cha
 
 DUCKDB_EXTENSION_ENTRYPOINT(duckdb_v2_extension_handle extension, duckdb_v2_context_handle context,
                             duckdb_v2_error_info_handle *err) {
+	shim_register_info(extension, context);
 	const char *path = getenv("V2_CAPI_SHIM_LOAD");
 	if (!path || !*path) {
 		return; /* nothing to load */

@@ -11,7 +11,8 @@ TV="${TARGET_VERSION:-v2.1.0-dev0}"; U=-DDUCKDB_V2_API_ALLOW_UNSTABLE=1
 clang -fPIC -c -std=c11 $U -Wall -Werror -Wno-unused-function -I "$T" -I $O -include $R/target_prelude.h $O/shim.c -o $B/shim.o
 clang -fPIC -c -std=c11 $U -Wall -Werror -I "$T" -include $R/target_prelude.h tools/capi-compat/compat_manual.c -o $B/manual.o
 clang -fPIC -c -std=c11 $U -DDUCKDB_BUILD_STATIC_EXTENSION -Wall -Werror -I $C $O/compat_table.c -o $B/table.o
-clang -fPIC -c -std=c11 $U -Wall -Werror -I "$T" -I $X $X/shim_entry.c -o $B/entry.o
+TLV="$("$TS/build/release/duckdb" -csv -noheader -c "SELECT library_version FROM pragma_version()")"
+clang -fPIC -c -std=c11 $U -Wall -Werror -DSHIM_TARGET_VERSION="\"$TLV\"" -DSHIM_TARGET_SOURCE_ID="\"$TV\"" -DSHIM_PLATFORM='"osx_arm64"' -I "$T" -I $X -I $R $X/shim_entry.c -o $B/entry.o
 # the target's own build flags for its C++ (release, C++17, its third_party includes)
 clang++ -fPIC -c -std=c++17 -O2 -DNDEBUG -DDUCKDB_MAJOR_VERSION=2 -DDUCKDB_MINOR_VERSION=1 -DDUCKDB_PATCH_VERSION=0 \
 	-I "$T" -I "$TS/third_party/fmt/include" -I "$TS/third_party/fast_float" -I "$TS/third_party/re2" -I $X $X/shim_extra.cpp -o $B/extra.o
