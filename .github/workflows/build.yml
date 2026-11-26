@@ -8,7 +8,7 @@
 #       POST /repos/carlopi/duckdb-v2_capi_shim/dispatches
 #       {"event_type": "build-for-duckdb", "client_payload": {"duckdb_ref": "<sha or tag>"}}
 #     (event types duckdb-nightly and duckdb-release work the same)
-#   - push, pull_request, schedule: v2.0.1 (the contract, with its release tooling) and main
+#   - push, pull_request, schedule: main (where the v2 C API moves; a new release comes in by callback, duckdb-release)
 name: build
 
 on:
@@ -46,17 +46,6 @@ jobs:
             echo "requested=0" >> "$GITHUB_OUTPUT"; echo "ref=main" >> "$GITHUB_OUTPUT"
           fi
 
-  # the contract itself, with the tooling of its release
-  release:
-    needs: ref
-    if: needs.ref.outputs.requested == '0'
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v2.0-cyanoptera
-    with:
-      duckdb_version: v2.0.1
-      ci_tools_version: v2.0-cyanoptera
-      extension_name: v2_capi_shim
-      exclude_archs: "windows_amd64;windows_amd64_mingw;windows_arm64;wasm_mvp;wasm_eh;wasm_threads"
-
   # main by default, or the requested ref, with current tooling
   target:
     needs: ref
@@ -73,8 +62,8 @@ jobs:
   # fine-grained, Contents read and write on it only) and EXTENSION_REPO_PUBLISH_TOKEN (this producer's publish token,
   # whose SHA-256 that repository's sources.json lists). Not for pull requests; without the secrets it does nothing.
   notify:
-    needs: [release, target]
-    if: always() && needs.target.result == 'success' && (needs.release.result == 'success' || needs.release.result == 'skipped') && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch')
+    needs: target
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch')
     runs-on: ubuntu-latest
     steps:
       - name: Ask the extension repository to publish
