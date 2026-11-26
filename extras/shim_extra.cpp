@@ -79,14 +79,17 @@ bool ContextInterrupted(struct _duckdb_v2_context *ctx) {
 	}
 }
 
-const duckdb_shim_extra_v1 EXTRA = {ContextQuery, ContextInterrupted};
+const duckdb_shim_connections_v1 CONNECTIONS = {ContextQuery};
+const duckdb_shim_interrupts_v1 INTERRUPTS = {ContextInterrupted};
 
 } // namespace
 
 extern "C" {
 
-const void *shim_extra_table() {
-	return &EXTRA;
+//! Offers every capability this loader has to a child that asks for them
+void shim_offer_all(duckdb_shim_offer_fn offer) {
+	offer(DUCKDB_SHIM_CONNECTIONS_V1, &CONNECTIONS);
+	offer(DUCKDB_SHIM_INTERRUPTS_V1, &INTERRUPTS);
 }
 
 // set by the loader for the duration of one InvokeCAPIV2Entrypoint: the child entrypoint the trampoline forwards to

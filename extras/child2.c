@@ -11,7 +11,9 @@ DUCKDB_EXTENSION_EXTERN
 #include <string.h>
 #include <time.h>
 
-static const duckdb_shim_extra_v1 *extra; /* NULL: not offered by whoever loaded us */
+/* capabilities beyond v2.0.1: connections is required (the load is refused without it), interrupts optional */
+static const duckdb_shim_connections_v1 *connections;
+static const duckdb_shim_interrupts_v1 *interrupts;
 
 static duckdb_v2_str S(const char *s) {
 	duckdb_v2_str r = {s, strlen(s)};
@@ -44,10 +46,6 @@ static void add_row(state_t *s, const char *text) {
 }
 static void bind(duckdb_v2_function_bind_info_handle info, duckdb_v2_table_function_bind_info_handle result,
                  duckdb_v2_context_handle ctx, duckdb_v2_error_info_handle *err) {
-	if (!extra) {
-		fail(err, "child2: needs duckdb_shim_extra/1 (load through v2_capi_shim)");
-		return;
-	}
 	duckdb_v2_value_handle v = NULL;
 	duckdb_v2_str text = {0, 0};
 	duckdb_v2_function_bind_get_arg_value(info, 0, &v, NULL);
@@ -101,7 +99,7 @@ static void sql_exec(duckdb_v2_table_function_exec_info_handle info, duckdb_v2_c
 	if (!s->done) {
 		s->done = 1;
 		char error[1024];
-		if (!extra->context_query(ctx, s->arg, strlen(s->arg), on_row, s, error, sizeof(error))) {
+		if (!connections->context_query(ctx, s->arg, strlen(s->arg), on_row, s, error, sizeof(error))) {
 			fail(err, error);
 			return;
 		}
@@ -116,7 +114,7 @@ static void wait_exec(duckdb_v2_table_function_exec_info_handle info, duckdb_v2_
 		s->done = 1;
 		long total = atol(s->arg), waited = 0;
 		struct timespec step = {0, 20 * 1000 * 1000};
-		while (waited < total && !extra->context_interrupted(ctx)) {
+		while (waited < total && !(interrupts && interrupts->context_interrupted(ctx))) {
 			nanosleep(&step, NULL);
 			waited += 20;
 		}
@@ -146,18 +144,22 @@ static void reg(duckdb_v2_extension_handle ext, duckdb_v2_context_handle ctx, co
 	duckdb_v2_logical_type_destroy(&t);
 }
 
-/* Optional, and outside the v2 contract: a loader that offers extras calls this before the entrypoint. DuckDB itself
- * never does, so loaded natively the extras stay NULL. (get_api cannot carry them: for a version-pinned extension
- * DuckDB's get_api ignores the name and returns the whole v2 table; for a stable one, an unknown name fails the load) */
-DUCKDB_CAPI_ENTRY_VISIBILITY void child2_duckdb_shim_extra(const void *table, const char *name) {
-	if (name && strcmp(name, DUCKDB_SHIM_EXTRA_V1) == 0) {
-		extra = (const duckdb_shim_extra_v1 *)table;
-	}
+/* Outside the v2 contract: a loader that has capabilities offers them here before the entrypoint; DuckDB never calls
+ * this. (get_api cannot carry them: for a version-pinned extension DuckDB's get_api ignores the name and returns the
+ * whole v2 table; for a stable one, an unknown name fails the load) */
+DUCKDB_CAPI_ENTRY_VISIBILITY void child2_duckdb_shim_extra(const char *capability, const void *table) {
+	if (strcmp(capability, DUCKDB_SHIM_CONNECTIONS_V1) == 0) connections = (const duckdb_shim_connections_v1 *)table;
+	if (strcmp(capability, DUCKDB_SHIM_INTERRUPTS_V1) == 0) interrupts = (const duckdb_shim_interrupts_v1 *)table;
 }
 
+/* v2.0.1 + capi('connections'): works where that is offered, refused at LOAD elsewhere */
 DUCKDB_EXTENSION_ENTRYPOINT(duckdb_v2_extension_handle extension, duckdb_v2_context_handle context,
                             duckdb_v2_error_info_handle *err) {
-	(void)err;
+	if (!connections) {
+		fail(err, "child2 requires v2.0.1 + capability 'connections/1', which this DuckDB does not offer (load it "
+		          "through v2_capi_shim)");
+		return;
+	}
 	reg(extension, context, "child2_sql", "query", sql_exec);
 	reg(extension, context, "child2_wait", "ms", wait_exec);
 }

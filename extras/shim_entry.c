@@ -13,7 +13,7 @@ DUCKDB_EXTENSION_EXTERN
 #include <string.h>
 
 extern const char compat_table[];        /* the v2.0.1-layout table (compat_table.c) */
-const void *shim_extra_table(void);      /* shim_extra.cpp */
+void shim_offer_all(duckdb_shim_offer_fn offer); /* shim_extra.cpp */
 bool shim_invoke_child(duckdb_v2_context_handle ctx, const char *name, void *lib, char *error, uint64_t cap);
 
 /* get_api as the contract declares it: (extension, version), no length */
@@ -44,8 +44,8 @@ void shim_forward_child(struct duckdb_v2_extension_input *input) {
 	}
 	/* the extras, to a child that asks for them by exporting <name>_duckdb_shim_extra */
 	if (pending_lib) {
-		void (*offer)(const void *, const char *) = (void (*)(const void *, const char *))dlsym(pending_lib, pending_offer);
-		if (offer) offer(shim_extra_table(), DUCKDB_SHIM_EXTRA_V1);
+		duckdb_shim_offer_fn offer = (duckdb_shim_offer_fn)dlsym(pending_lib, pending_offer);
+		if (offer) shim_offer_all(offer);
 	}
 	struct duckdb_v2_extension_input contract = *input; /* same layout; only get_api's signature differs */
 	contract.get_api = (duckdb_v2_extension_get_api_fn)(void (*)(void))contract_get_api;
