@@ -121,7 +121,7 @@ jobs:
   # Signed with the extension repository's key and committed to its main branch, which GitHub Pages serves as
   # https://carlopi.github.io/example-duckdb-extension-repository, at <version dir>/<platform>/v2_capi_shim.duckdb_extension.gz.
   # Needs, in this repository's secrets: EXTENSION_REPO_SIGNING_KEY (the PEM private key whose public key is in that
-  # repository's .well-known/duckdb-extension-repo.json) and EXTENSION_REPO_TOKEN (a token that may push to it).
+  # repository's .well-known/duckdb-extension-repo.json) and EXTENSION_REPO_SSH_KEY (the private half of a deploy key with write access on it).
   # Not for pull requests; without the secrets it says so and does nothing.
   publish:
     needs: build
@@ -135,10 +135,10 @@ jobs:
         id: secrets
         env:
           KEY: ${{ secrets.EXTENSION_REPO_SIGNING_KEY }}
-          TOKEN: ${{ secrets.EXTENSION_REPO_TOKEN }}
+          SSH_KEY: ${{ secrets.EXTENSION_REPO_SSH_KEY }}
         run: |
-          if [ -n "$KEY" ] && [ -n "$TOKEN" ]; then echo "ok=1" >> "$GITHUB_OUTPUT"; else
-            echo "::notice::EXTENSION_REPO_SIGNING_KEY / EXTENSION_REPO_TOKEN not set: nothing published"; echo "ok=0" >> "$GITHUB_OUTPUT"; fi
+          if [ -n "$KEY" ] && [ -n "$SSH_KEY" ]; then echo "ok=1" >> "$GITHUB_OUTPUT"; else
+            echo "::notice::EXTENSION_REPO_SIGNING_KEY / EXTENSION_REPO_SSH_KEY not set: nothing published"; echo "ok=0" >> "$GITHUB_OUTPUT"; fi
 
       - uses: actions/download-artifact@v4
         if: steps.secrets.outputs.ok == '1'
@@ -151,7 +151,7 @@ jobs:
         with:
           repository: carlopi/example-duckdb-extension-repository
           ref: main
-          token: ${{ secrets.EXTENSION_REPO_TOKEN }}
+          ssh-key: ${{ secrets.EXTENSION_REPO_SSH_KEY }}
           path: repo
 
       - name: Sign, place, commit, push
