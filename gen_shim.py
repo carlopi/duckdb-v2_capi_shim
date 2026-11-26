@@ -56,19 +56,48 @@ SYNC_CB = {'duckdb_v2_text_sink_fn': 'compat_text_sink_tramp',
            'duckdb_v2_file_system_path_glob_callback_fn': 'compat_glob_tramp'}
 MANUAL = {'duckdb_v2_log_sink_set_write_callback', 'duckdb_v2_log_sink_set_flush_callback',
           'duckdb_v2_log_sink_set_user_data'} if 'duckdb_v2_log_sink_write_callback_fn' in changed_cb else set()
+LOG_SINK_MANUAL = set(MANUAL)
+# a target whose table functions and COPY FROM scan with data sources (DuckDB #29411): the contract's scan callback
+# setters, and the creation and destruction of the functions they belong to, are compat_data_source.c's; the getters
+# of the scan's info handles are the data source's, renamed
+HAS_DATA_SOURCES = 'duckdb_v2_data_source_create' in new and 'duckdb_v2_data_source_create' not in old
+DS_MANUAL = set()
+if HAS_DATA_SOURCES:
+    DS_MANUAL = {k for k in old if k not in new and re.search(r'^duckdb_v2_(table_function|copy_from)_set_[a-z_]*callback$', k)}
+    DS_MANUAL |= {'duckdb_v2_table_function_create', 'duckdb_v2_table_function_destroy', 'duckdb_v2_copy_function_create',
+                  'duckdb_v2_copy_function_destroy'}
+MANUAL |= DS_MANUAL
+
+
+def data_source_name(name):
+    return re.sub(r'duckdb_v2_(table_function|copy_from)_', 'duckdb_v2_data_source_', name)
 
 stats = {'forward': 0, 'generated': 0, 'manual': 0}
 manual, unmatched, out = [], [], []
 for name, (ret, ops) in old.items():
+    if name in MANUAL:
+        manual.append(name)
+        continue
+    if name not in new and HAS_DATA_SOURCES and data_source_name(name) in new:
+        # the same function on the scan's data source: same parameters, its info handles renamed; the pointers DuckDB
+        # hands the callbacks are data source infos already, so they pass through as such
+        target = data_source_name(name)
+        nret, nps = new[target]
+        if len(nps) == len(ops) and nret == ret:
+            sig = "%s compat_%s(%s)" % (oldtype(ret), name,
+                                        ', '.join(oldtype(t) + ' ' + (n or 'a%d' % i) for i, (n, t) in enumerate(ops)) or 'void')
+            args = [n if oldtype(t) == nt else "(%s)%s" % (nt, n) for (n, t), (_, nt) in zip(ops, nps)]
+            r = "%s r_ = " % ret if ret != 'void' else ''
+            trace = ' COMPAT_TRACE("%s", r_);' % name if ret == 'DUCKDB_V2_ERROR' else ''
+            out.append("%s { %s%s(%s);%s %s }" % (sig, r, target, ', '.join(args), trace, 'return r_;' if ret != 'void' else ''))
+            stats['generated'] += 1
+            continue
     if name not in new:
         unmatched.append((name, 'removed in the target'))
         continue
     nret, nps = new[name]
     sig = "%s compat_%s(%s)" % (oldtype(ret), name,
                                 ', '.join(oldtype(t) + ' ' + (n or 'a%d' % i) for i, (n, t) in enumerate(ops)) or 'void')
-    if name in MANUAL:
-        manual.append(name)
-        continue
     if [oldtype(t) for _, t in ops] == [t for _, t in nps] and ret == nret:
         stats['forward'] += 1
         if ret == 'DUCKDB_V2_ERROR':
@@ -148,7 +177,16 @@ if 'duckdb_v2_file_system_path_glob_callback_fn' in changed_cb:
 # an array of string structs -> two parallel arrays; a NULL array stays NULL (e.g. type parameters without names)
 hdr += ['#define COMPAT_UNPACK(a, n) const char **a##_p = NULL; idx_t *a##_l = NULL; if (a) { a##_p = (const char **)malloc(sizeof(char *) * ((n) + 1)); a##_l = (idx_t *)malloc(sizeof(idx_t) * ((n) + 1)); for (idx_t k_ = 0; k_ < (n); k_++) { a##_p[k_] = a[k_].ptr; a##_l[k_] = a[k_].len; } }',
         '#define COMPAT_FREE(a) free((void *)a##_p); free(a##_l);']
+target_text = open(os.environ['TARGET_HEADER']).read() if os.environ.get('TARGET_HEADER') else ''
+if target_text:
+    used = set(re.findall(r'\bduckdb_v2_\w+_handle\b', '\n'.join(out)))
+    gone = sorted(t for t in used if not re.search(r'\b%s\b' % t, target_text))
+    if gone:
+        hdr.append('/* contract handle types the target no longer declares: opaque pointers */')
+        hdr += ['typedef void *%s;' % t for t in gone]
 open('shim.c', 'w').write('\n'.join(hdr) + '\n' + '\n'.join(out) + '\n')
+sources = (['compat_manual.c'] if LOG_SINK_MANUAL & set(manual) else []) + (['compat_data_source.c'] if DS_MANUAL else [])
+open('manual_sources.txt', 'w').write('\n'.join(sources) + ('\n' if sources else ''))
 open('manual.txt', 'w').write('\n'.join(manual) + ('\n' if manual else ''))
 print(stats)
 print('hand-written:', manual)
