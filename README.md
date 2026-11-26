@@ -60,8 +60,10 @@ images; Linux and macOS: `linux_amd64`, `linux_arm64`, `osx_amd64`, `osx_arm64`,
   `POST /repos/carlopi/duckdb-v2_capi_shim/dispatches` with
   `{"event_type": "build-for-duckdb", "client_payload": {"duckdb_ref": "<sha or tag>"}}`
   (`duckdb-nightly`, `duckdb-release` work the same; the sender needs a token allowed to dispatch to this repository)
-- by the in-house dispatcher (`.github/workflows/dispatcher.yml`), hourly: for the heads of `main` and
-  `v2.0-cyanoptera` and the newest `v2.0.x` tag, whatever is not yet published in the extension repository is built
+- by the in-house dispatcher (`.github/workflows/dispatcher.yml`), hourly: DuckDB's latest published alpha of each line
+  (`duckdb-staging.duckdb.org/release/2.0/` and `/2.1/latest_alpha_version.txt`, what `install.sh` installs as
+  `v2.0-alpha` / `v2.1-alpha`), built and published under that alpha's version if the extension repository does not
+  have it yet
 - otherwise (push, pull request): the heads of the two lines the shim supports,
   `v2.0-cyanoptera` (DuckDB's 2.0.x release branch, with its own tooling) and `main`; a requested ref goes to the line
   it belongs to

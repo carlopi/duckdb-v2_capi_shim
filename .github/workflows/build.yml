@@ -10,7 +10,7 @@
 #     (event types duckdb-nightly and duckdb-release work the same)
 #   - push, pull_request: the heads of v2.0-cyanoptera (DuckDB's 2.0.x release branch) and main
 name: build
-run-name: "build for DuckDB ${{ github.event.inputs.duckdb_ref || github.event.client_payload.duckdb_ref || 'v2.0-cyanoptera and main' }}"
+run-name: "build for DuckDB ${{ github.event.inputs.duckdb_version || github.event.inputs.duckdb_ref || github.event.client_payload.duckdb_ref || 'v2.0-cyanoptera and main' }}"
 
 on:
   workflow_dispatch:
@@ -23,6 +23,10 @@ on:
         description: "the DuckDB line it belongs to: auto (by its name), v2.0-cyanoptera or main"
         required: false
         default: auto
+      duckdb_version:
+        description: "what that DuckDB calls itself, when not its tag or source id (an alpha: v2.1.0-alpha57892)"
+        required: false
+        default: ""
   repository_dispatch:
     types: [build-for-duckdb, duckdb-nightly, duckdb-release]
   push:
@@ -49,6 +53,7 @@ jobs:
           INPUT_REF: ${{ github.event.inputs.duckdb_ref }}
           PAYLOAD_REF: ${{ github.event.client_payload.duckdb_ref }}
           LINE: ${{ github.event.inputs.line || github.event.client_payload.line || 'auto' }}
+          VERSION: ${{ github.event.inputs.duckdb_version || github.event.client_payload.duckdb_version }}
           GH_TOKEN: ${{ github.token }}
         run: |
           resolve() { # resolve <line> <ref>
@@ -56,7 +61,9 @@ jobs:
               echo "$1_version=$2" >> "$GITHUB_OUTPUT"; echo "$1_commit=" >> "$GITHUB_OUTPUT"; echo "$1: DuckDB $2 (release)"
             else
               sha=$(gh api "repos/duckdb/duckdb/commits/$2" --jq .sha)
-              echo "$1_version=${sha:0:10}" >> "$GITHUB_OUTPUT"; echo "$1_commit=$sha" >> "$GITHUB_OUTPUT"; echo "$1: DuckDB $2 = $sha"
+              # a staged build (an alpha) calls itself by its version, which is then also its INSTALL directory
+              version="${VERSION:-${sha:0:10}}"
+              echo "$1_version=$version" >> "$GITHUB_OUTPUT"; echo "$1_commit=$sha" >> "$GITHUB_OUTPUT"; echo "$1: DuckDB $2 = $sha as $version"
             fi
             echo "$1=1" >> "$GITHUB_OUTPUT"
           }
@@ -64,8 +71,8 @@ jobs:
           if [ -z "$ref" ]; then
             resolve cyanoptera v2.0-cyanoptera; resolve main main; exit 0
           fi
-          # only what a git ref can be: no quotes or spaces reach the build
-          case "$ref" in *[!A-Za-z0-9._/-]*) echo "invalid duckdb_ref: $ref" >&2; exit 1 ;; esac
+          # only what a git ref or a version can be: no quotes or spaces reach the build
+          case "$ref$VERSION" in *[!A-Za-z0-9._/-]*) echo "invalid duckdb_ref / duckdb_version: $ref $VERSION" >&2; exit 1 ;; esac
           if [ "$LINE" = auto ]; then
             case "$ref" in v2.0.*|v2.0-cyanoptera) LINE=v2.0-cyanoptera ;; *) LINE=main ;; esac
           fi
