@@ -15,7 +15,7 @@ gcc -fPIC -c -std=c11 $U -Wall -Werror -Wno-unused-function -I $T -I $O -include
 gcc -fPIC -c -std=c11 $U -Wall -Werror -I $T -include $R/target_prelude.h tools/capi-compat/compat_manual.c -o $B/manual.o
 gcc -fPIC -c -std=c11 $U -DDUCKDB_BUILD_STATIC_EXTENSION -Wall -Werror -I $C $O/compat_table.c -o $B/table.o
 TLV=$($L/duckdb -csv -noheader -c "SELECT library_version FROM pragma_version()"); TSID=$($L/duckdb -csv -noheader -c "SELECT source_id FROM pragma_version()")
-gcc -fPIC -c -std=gnu11 $U -Wall -Werror -DSHIM_TARGET_VERSION="\"$TLV\"" -DSHIM_TARGET_SOURCE_ID="\"$TSID\"" -DSHIM_PLATFORM='"linux_arm64"' -I $T -I $X -I $R $X/shim_entry.c -o $B/entry.o
+gcc -fPIC -c -std=gnu11 $U -Wall -Werror -DSHIM_TARGET_VERSION="\"$TLV\"" -DSHIM_TARGET_SOURCE_ID="\"$TSID\"" -DSHIM_PLATFORM=\"linux_arm64\" -I $T -I $X -I $R $X/shim_entry.c -o $B/entry.o
 g++ -fPIC -c -std=c++17 -O2 -DNDEBUG -DDUCKDB_MAJOR_VERSION=2 -DDUCKDB_MINOR_VERSION=1 -DDUCKDB_PATCH_VERSION=0 \
 	-I $T -I $TS/third_party/fmt/include -I $TS/third_party/fast_float -I $TS/third_party/re2 -I $X $X/shim_extra.cpp -o $B/extra.o
 echo "{ global: v2_capi_shim_init_c_api_v2; local: *; };" > $B/exports.map
@@ -29,6 +29,8 @@ echo "target: $($L/duckdb -csv -noheader -c "SELECT library_version || chr(32) |
 echo "== rusty_quack on main, directly:"
 $L/duckdb -no-agent -unsigned -c "LOAD '"'"'$EXT'"'"';" 2>&1 | head -1 || true
 LD="LOAD '"'"'$B/v2_capi_shim.duckdb_extension'"'"'; SET allow_unsigned_extensions = false"
+echo "== the loader says:"
+$L/duckdb -no-agent -unsigned -csv -c "LOAD '"'"'$B/v2_capi_shim.duckdb_extension'"'"'; SELECT * FROM v2_capi_shim_info(); SELECT * FROM v2_capi_shim_capabilities();" 2>&1
 echo "== signed by core? (it is not):"
 $L/duckdb -no-agent -unsigned -c "$LD; SELECT * FROM load_extension('"'"'$EXT'"'"', repo := '"'"'core'"'"');" 2>&1 | head -1 || true
 echo "== signed by community, through the loader:"
