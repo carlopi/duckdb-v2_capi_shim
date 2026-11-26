@@ -2,14 +2,15 @@
 # Linux and macOS: linux_amd64, linux_arm64, osx_amd64, osx_arm64, and Linux musl), then asks
 # carlopi/example-duckdb-extension-repository to publish the run.
 #
-# Which DuckDB:
+# Which DuckDB (new DuckDB commits and releases are noticed by dispatcher.yml, which starts this for them):
 #   - workflow_dispatch: the duckdb_ref input (a tag, branch or commit)
 #   - repository_dispatch (a callback, e.g. from whatever publishes a DuckDB nightly or release):
 #       POST /repos/carlopi/duckdb-v2_capi_shim/dispatches
 #       {"event_type": "build-for-duckdb", "client_payload": {"duckdb_ref": "<sha or tag>"}}
 #     (event types duckdb-nightly and duckdb-release work the same)
-#   - push, pull_request, schedule: the heads of v2.0-cyanoptera (DuckDB's 2.0.x release branch) and main
+#   - push, pull_request: the heads of v2.0-cyanoptera (DuckDB's 2.0.x release branch) and main
 name: build
+run-name: "build for DuckDB ${{ github.event.inputs.duckdb_ref || github.event.client_payload.duckdb_ref || 'v2.0-cyanoptera and main' }}"
 
 on:
   workflow_dispatch:
@@ -22,8 +23,6 @@ on:
     types: [build-for-duckdb, duckdb-nightly, duckdb-release]
   push:
   pull_request:
-  schedule:
-    - cron: "17 3 * * *"
 
 jobs:
   # Which DuckDBs: by default the heads of the two lines this shim supports, v2.0-cyanoptera (the 2.0.x release branch,

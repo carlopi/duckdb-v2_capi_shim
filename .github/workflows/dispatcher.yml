@@ -1,0 +1,55 @@
+# The in-house dispatcher: watches the DuckDB lines this shim supports and builds the shim for each new one, so a new
+# main commit, a new v2.0-cyanoptera commit or a new v2.0.x release gets its shim without anyone sending a callback.
+# Hourly: for the heads of main and v2.0-cyanoptera, and the newest v2.0.x tag, it asks the extension repository's
+# Pages whether that DuckDB's shim is published (<version>/<platform>/v2_capi_shim.duckdb_extension.gz, for every
+# platform built), and GitHub whether a build for it is already running; if neither, it starts build.yml for it.
+# Its own GITHUB_TOKEN is enough: workflow_dispatch events made with it do start workflows.
+name: dispatcher
+
+on:
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: dispatcher
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build what is new
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PAGES: https://carlopi.github.io/example-duckdb-extension-repository
+          PLATFORMS: "linux_amd64 linux_arm64 osx_amd64 osx_arm64"
+        run: |
+          set -euo pipefail
+          remote=https://github.com/duckdb/duckdb
+          heads=$(git ls-remote "$remote" refs/heads/main refs/heads/v2.0-cyanoptera)
+          newest_tag=$(git ls-remote --tags --refs "$remote" 'refs/tags/v2.0.*' | sed 's#.*refs/tags/##' \
+            | grep -E '^v2\.0\.[0-9]+$' | sort -t. -k3 -n | tail -1)
+          # each target: <ref to build> <version directory it lands in>
+          targets=""
+          while read -r sha ref; do targets="$targets ${sha}:${sha:0:10}"; done <<< "$heads"
+          [ -z "$newest_tag" ] || targets="$targets $newest_tag:$newest_tag"
+          running=$(gh run list --repo "$REPO" --workflow build.yml --limit 50 --json status,displayTitle \
+            --jq '.[] | select(.status != "completed") | .displayTitle')
+          for t in $targets; do
+            ref=${t%%:*}; dir=${t#*:}
+            missing=""
+            for p in $PLATFORMS; do
+              code=$(curl -s -o /dev/null -w '%{http_code}' -I "$PAGES/$dir/$p/v2_capi_shim.duckdb_extension.gz")
+              [ "$code" = 200 ] || missing="$missing $p"
+            done
+            if [ -z "$missing" ]; then echo "$dir: published"; continue; fi
+            if printf '%s\n' "$running" | grep -q -- "$ref"; then echo "$dir: building already"; continue; fi
+            echo "$dir: missing for$missing: building $ref"
+            gh workflow run build.yml --repo "$REPO" -f duckdb_ref="$ref"
+          done
