@@ -14,7 +14,7 @@
 DUCKDB_EXTENSION_EXTERN
 #include <stdlib.h>
 #define SHIM_KIND "bridge"
-static const char *const SHIM_CAPABILITIES[] = {"", ""};
+static const char *const SHIM_CAPABILITIES[] = {"", "", "", ""};
 #define SHIM_CAPABILITIES_EMPTY 1
 #include "shim_tables.h"
 #include <dlfcn.h>

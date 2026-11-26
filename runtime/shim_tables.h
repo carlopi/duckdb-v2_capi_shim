@@ -99,9 +99,10 @@ static const char *const SHIM_INFO_COLUMNS[] = {"contract", "target_version", "t
 static const char *const SHIM_INFO_CELLS[] = {SHIM_CONTRACT_VERSION, SHIM_TARGET_VERSION, SHIM_TARGET_SOURCE_ID,
                                               SHIM_PLATFORM, SHIM_KIND};
 static const shim_table SHIM_INFO = {"v2_capi_shim_info", 5, SHIM_INFO_COLUMNS, 1, SHIM_INFO_CELLS};
-static const char *const SHIM_CAPABILITY_COLUMNS[] = {"capability", "description"};
-static const shim_table SHIM_CAPABILITIES_TABLE = {"v2_capi_shim_capabilities", 2, SHIM_CAPABILITY_COLUMNS,
-                                                   (int)(sizeof(SHIM_CAPABILITIES) / sizeof(SHIM_CAPABILITIES[0])) / 2 -
+/* the named function tables shipped beyond the contract: what a child can receive through <name>_duckdb_shim_extra */
+static const char *const SHIM_CAPABILITY_COLUMNS[] = {"name", "version", "functions", "description"};
+static const shim_table SHIM_CAPABILITIES_TABLE = {"v2_capi_shim_capabilities", 4, SHIM_CAPABILITY_COLUMNS,
+                                                   (int)(sizeof(SHIM_CAPABILITIES) / sizeof(SHIM_CAPABILITIES[0])) / 4 -
                                                        SHIM_CAPABILITIES_EMPTY,
                                                    SHIM_CAPABILITIES};
 

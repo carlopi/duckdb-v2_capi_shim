@@ -10,6 +10,11 @@
 #include "duckdb/main/extension.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/common/file_system.hpp"
+#include "duckdb/common/gzip_file_system.hpp"
+#include "duckdb/main/extension_repository_manager.hpp"
+#include "duckdb/main/http/http_transport_manager.hpp"
+#include "duckdb/main/http/http_util.hpp"
+#include "duckdb/main/config.hpp"
 
 #include <cstring>
 #include <string>
@@ -108,6 +113,33 @@ void shim_offer_all(duckdb_shim_offer_fn offer) {
 	offer(DUCKDB_SHIM_INTERRUPTS_V1, &INTERRUPTS);
 }
 
+//! What is wrong with a child's footer for this loader, empty when nothing is
+static std::string FooterProblem(ParsedExtensionMetaData &meta, const char *contract) {
+	if (!meta.AppearsValid()) {
+		return "it has no DuckDB extension footer";
+	}
+	if (meta.abi_type != ExtensionABIType::C_STRUCT_UNSTABLE) {
+		return "it is not a v2 C API extension (footer ABI " + EnumUtil::ToString(meta.abi_type) + ")";
+	}
+	if (meta.duckdb_version != contract) {
+		return "it was built for DuckDB '" + meta.duckdb_version + "', this loader serves the '" + contract +
+		       "' contract";
+	}
+	if (meta.platform != DuckDB::Platform()) {
+		return "it was built for platform '" + meta.platform + "', this is '" + DuckDB::Platform() + "'";
+	}
+	return std::string();
+}
+
+//! The keys a repository name stands for: core, community, or a user-provided repository by name
+static void RepositoryKeys(const std::string &name, ExtensionRepositoryType &type, std::string &signing_name) {
+	auto lower = StringUtil::Lower(name);
+	type = lower == "core" ? ExtensionRepositoryType::CORE
+	       : lower == "community" ? ExtensionRepositoryType::COMMUNITY
+	                              : ExtensionRepositoryType::USER_PROVIDED;
+	signing_name = type == ExtensionRepositoryType::USER_PROVIDED ? name : std::string();
+}
+
 //! Before a child is opened: its footer must say a v2 extension built for the contract on this platform (instead of
 //! DuckDB's own check, which wants this DuckDB's version), and, unless allow_unsigned_extensions is set, it must be
 //! signed by the named repository: core, community, or a user-provided one, checked by DuckDB's own code
@@ -119,17 +151,7 @@ bool shim_verify_child(struct _duckdb_v2_context *ctx, const char *path, const c
 		auto &fs = FileSystem::GetFileSystem(context);
 		auto handle = fs.OpenFile(path, FileFlags::FILE_FLAGS_READ);
 		auto meta = ExtensionHelper::ParseExtensionMetaData(*handle);
-		std::string problem;
-		if (!meta.AppearsValid()) {
-			problem = "it has no DuckDB extension footer";
-		} else if (meta.abi_type != ExtensionABIType::C_STRUCT_UNSTABLE) {
-			problem = "it is not a v2 C API extension (footer ABI " + EnumUtil::ToString(meta.abi_type) + ")";
-		} else if (meta.duckdb_version != contract) {
-			problem = "it was built for DuckDB '" + meta.duckdb_version + "', this loader serves the '" + contract +
-			          "' contract";
-		} else if (meta.platform != DuckDB::Platform()) {
-			problem = "it was built for platform '" + meta.platform + "', this is '" + DuckDB::Platform() + "'";
-		}
+		auto problem = FooterProblem(meta, contract);
 		bool unsigned_ok = Settings::Get<AllowUnsignedExtensionsSetting>(db);
 		if (!problem.empty() && !(unsigned_ok && Settings::Get<AllowExtensionsMetadataMismatchSetting>(db))) {
 			SetError(error, error_capacity, problem);
@@ -145,11 +167,9 @@ bool shim_verify_child(struct _duckdb_v2_context *ctx, const char *path, const c
 			         "or a repository created with CREATE REPOSITORY)");
 			return false;
 		}
-		auto lower = StringUtil::Lower(name);
-		auto type = lower == "core"        ? ExtensionRepositoryType::CORE
-		            : lower == "community" ? ExtensionRepositoryType::COMMUNITY
-		                                   : ExtensionRepositoryType::USER_PROVIDED;
-		auto signing_name = type == ExtensionRepositoryType::USER_PROVIDED ? name : std::string();
+		ExtensionRepositoryType type;
+		std::string signing_name;
+		RepositoryKeys(name, type, signing_name);
 		if (!ExtensionHelper::CheckExtensionSignature(db, *handle, meta, type, signing_name)) {
 			SetError(error, error_capacity, "it is not signed by repository '" + name + "'");
 			return false;
@@ -182,6 +202,87 @@ void shim_describe_self(struct _duckdb_v2_context *ctx, const char *name, const 
 		             "interrupts/1. SELECT * FROM load_extension(path, repo := 'community') checks the footer and the "
 		             "repository's signature, then loads");
 	} catch (...) { // NOLINT: a description is not worth failing a load
+	}
+}
+
+//! install_and_load_extension's first half: the repository name resolved to its location the way INSTALL resolves it
+//! (core, community, or a repository created with CREATE REPOSITORY), the contract's build fetched from
+//! <location>/<contract>/<platform>/<name>.duckdb_extension.gz with DuckDB's HTTP client, and stored, decompressed,
+//! under <extension directory>/v2_capi_shim/<contract>/<name>.v2_capi_shim, apart from this DuckDB's own installs, once
+//! its footer and signature were checked in memory (only checked bytes are written).
+//! The caller then checks and loads it exactly as load_extension(path, repo) does
+bool shim_install_child(struct _duckdb_v2_context *ctx, const char *name, const char *repo, const char *contract,
+                        char *path_out, uint64_t path_capacity, char *error, uint64_t error_capacity) {
+	try {
+		auto &context = ContextOf(ctx);
+		auto &db = *context.db;
+		auto &fs = FileSystem::GetFileSystem(context);
+		ExtensionRepository repository;
+		if (!ExtensionRepository::TryGetKnownRepository(repo, repository) &&
+		    !ExtensionRepositoryManager::TryGetRepository(db, fs, repo, repository)) {
+			SetError(error, error_capacity,
+			         std::string("unknown repository '") + repo +
+			             "': core, community, or a repository created with CREATE REPOSITORY");
+			return false;
+		}
+		auto url = repository.path + "/" + contract + "/" + DuckDB::Platform() + "/" + name + ".duckdb_extension.gz";
+		auto session = db.config.GetHTTPTransportManager().CreateSession(context, url);
+		HTTPHeaders headers;
+		GetRequestInfo request(url, headers, session.Parameters(), nullptr, nullptr);
+		auto response = session.Request(request);
+		if (!response->Success()) {
+			SetError(error, error_capacity,
+			         "could not fetch " + url + ": " +
+			             (response->HasRequestError() ? response->GetRequestError()
+			                                          : "HTTP " + std::to_string(int(response->status))));
+			return false;
+		}
+		auto bytes = GZipFileSystem::UncompressGZIPString(response->body);
+		// checked before anything is written, as INSTALL checks: the footer, then the repository's signature
+		if (bytes.size() < ParsedExtensionMetaData::FOOTER_SIZE) {
+			SetError(error, error_capacity, url + " is too small to be an extension");
+			return false;
+		}
+		auto meta = ExtensionHelper::ParseExtensionMetaData(bytes.data() + bytes.size() -
+		                                                    ParsedExtensionMetaData::FOOTER_SIZE);
+		auto problem = FooterProblem(meta, contract);
+		bool unsigned_ok = Settings::Get<AllowUnsignedExtensionsSetting>(db);
+		if (!problem.empty() && !(unsigned_ok && Settings::Get<AllowExtensionsMetadataMismatchSetting>(db))) {
+			SetError(error, error_capacity, "refusing " + url + ": " + problem);
+			return false;
+		}
+		if (!unsigned_ok) {
+			ExtensionRepositoryType type;
+			std::string signing_name;
+			RepositoryKeys(repo, type, signing_name);
+			if (!ExtensionHelper::CheckExtensionBufferSignature(db, bytes.data(), bytes.size(), type, signing_name,
+			                                                    nullptr)) {
+				SetError(error, error_capacity, "refusing " + url + ": it is not signed by repository '" + repo + "'");
+				return false;
+			}
+		}
+		auto directories = ExtensionHelper::GetExtensionDirectoryPath(context);
+		if (directories.empty()) {
+			SetError(error, error_capacity, "no extension directory to install into");
+			return false;
+		}
+		auto dir = fs.JoinPath(fs.JoinPath(directories[0], "v2_capi_shim"), contract);
+		fs.CreateDirectoriesRecursive(dir);
+		// not *.duckdb_extension: those only INSTALL may write. This is the loader's own store, which DuckDB's LOAD
+		// does not look into
+		auto path = fs.JoinPath(dir, std::string(name) + ".v2_capi_shim");
+		auto tmp = path + ".tmp";
+		{
+			auto out = fs.OpenFile(tmp, FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
+			out->Write((void *)bytes.data(), bytes.size());
+			out->Sync();
+		}
+		fs.MoveFile(tmp, path);
+		SetError(path_out, path_capacity, path);
+		return true;
+	} catch (std::exception &e) {
+		SetError(error, error_capacity, ErrorData(e).RawMessage());
+		return false;
 	}
 }
 

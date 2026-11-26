@@ -36,6 +36,13 @@ $L/duckdb -no-agent -unsigned -c "$LD; SELECT * FROM load_extension('"'"'$EXT'"'
 echo "== signed by community, through the loader:"
 $L/duckdb -no-agent -unsigned -csv -cmd "$LD; SELECT * FROM load_extension('"'"'$EXT'"'"', repo := '"'"'community'"'"');" -f $S/rusty_queries.sql > $S/actual_main.csv 2>&1 || true
 cat $S/actual_main.csv
+echo "== install_and_load_extension(rusty_quack, community), fresh extension directory, unsigned off:"
+rm -rf /tmp/home && mkdir -p /tmp/home
+HOME=/tmp/home $L/duckdb -no-agent -unsigned -csv -cmd "$LD; SELECT * FROM install_and_load_extension('"'"'rusty_quack'"'"', '"'"'community'"'"');" -f $S/rusty_queries.sql > $S/actual_main_installed.csv 2>&1 || true
+head -3 $S/actual_main_installed.csv
+find /tmp/home -name "*.duckdb_extension" | sed "s#/tmp/home#~#"
 '
 echo "== diff against v2.0.1 natively:"
 diff <(sed '1,3d' $S/expected_v201.csv | sed '1s/^\x1b\[00m//') <(sed '1,2d' $S/actual_main.csv) && echo IDENTICAL
+echo "== installed run, diff against v2.0.1 natively:"
+diff <(sed '1,3d' $S/expected_v201.csv | sed '1s/^\x1b\[00m//') <(sed '1,2d' $S/actual_main_installed.csv) && echo IDENTICAL

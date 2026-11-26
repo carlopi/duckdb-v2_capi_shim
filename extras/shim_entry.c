@@ -16,7 +16,11 @@
 DUCKDB_EXTENSION_EXTERN
 #include <stdlib.h>
 #define SHIM_KIND "bridge+capabilities"
-static const char *const SHIM_CAPABILITIES[] = {"connections/1", "context_query: SQL on a connection of its own to the database of a callback's context", "interrupts/1", "context_interrupted: whether the query of a context was interrupted (Ctrl-C, max_execution_time)"};
+static const char *const SHIM_CAPABILITIES[] = {
+    "connections", "1", "context_query",
+    "SQL on a connection of its own to the database of a callback's context (offered as 'connections/1')",
+    "interrupts", "1", "context_interrupted",
+    "whether the query of a context was interrupted: Ctrl-C, max_execution_time (offered as 'interrupts/1')"};
 #define SHIM_CAPABILITIES_EMPTY 0
 #include "shim_tables.h"
 #include "shim_extra.h"
@@ -28,6 +32,7 @@ static const char *const SHIM_CAPABILITIES[] = {"connections/1", "context_query:
 extern const char compat_table[];        /* the v2.0.1-layout table (compat_table.c) */
 void shim_offer_all(duckdb_shim_offer_fn offer); /* shim_extra.cpp */
 bool shim_verify_child(duckdb_v2_context_handle ctx, const char *path, const char *repo, const char *contract, char *error, uint64_t cap);
+bool shim_install_child(duckdb_v2_context_handle ctx, const char *name, const char *repo, const char *contract, char *path_out, uint64_t path_cap, char *error, uint64_t cap);
 void shim_describe_self(duckdb_v2_context_handle ctx, const char *name, const char *contract);
 bool shim_invoke_child(duckdb_v2_context_handle ctx, const char *name, const char *path, void *lib, char *error, uint64_t cap);
 
@@ -105,44 +110,46 @@ static void *open_child(const char *path, char *name, size_t name_cap, child_ini
 typedef struct { char name[256]; int emitted; } load_state;
 static void free_state(void *p) { free(p); }
 
-static void load_bind(duckdb_v2_function_bind_info_handle info, duckdb_v2_table_function_bind_info_handle result,
-                      duckdb_v2_context_handle context, duckdb_v2_error_info_handle *err) {
-	duckdb_v2_value_handle arg = NULL;
-	const char *path = NULL;
-	idx_t path_len = 0;
-	char error[1024] = "", name[256] = "", buf[4096];
-	if (duckdb_v2_function_bind_get_arg_value(info, 0, &arg, NULL) || duckdb_v2_value_get_varchar(arg, &path, &path_len, NULL)) {
-		report(err, "load_extension", "expects a path");
-		return;
-	}
-	snprintf(buf, sizeof(buf), "%.*s", (int)path_len, path);
-	duckdb_v2_value_destroy(&arg);
-	char repo[256] = "";
-	idx_t repo_index = 0;
-	bool repo_found = false;
-	if (duckdb_v2_function_bind_get_arg_index(info, "repo", 4, &repo_index, &repo_found, NULL) == DUCKDB_V2_ERROR_NONE && repo_found) {
-		duckdb_v2_value_handle rv = NULL;
-		const char *r = NULL;
-		idx_t rl = 0;
-		if (duckdb_v2_function_bind_get_arg_value(info, repo_index, &rv, NULL) == DUCKDB_V2_ERROR_NONE &&
-		    duckdb_v2_value_get_varchar(rv, &r, &rl, NULL) == DUCKDB_V2_ERROR_NONE && r) {
-			snprintf(repo, sizeof(repo), "%.*s", (int)rl, r);
+/* the text of an argument, by position or by name; empty when absent */
+static void arg_text(duckdb_v2_function_bind_info_handle info, idx_t position, const char *name, char *out, size_t cap) {
+	out[0] = '\0';
+	idx_t index = position;
+	bool found = true;
+	if (name) {
+		found = false;
+		if (duckdb_v2_function_bind_get_arg_index(info, name, strlen(name), &index, &found, NULL) != DUCKDB_V2_ERROR_NONE) {
+			return;
 		}
-		duckdb_v2_value_destroy(&rv);
 	}
-	if (!shim_verify_child(context, buf, repo, SHIM_CONTRACT_VERSION, error, sizeof(error))) {
+	duckdb_v2_value_handle v = NULL;
+	const char *t = NULL;
+	idx_t l = 0;
+	if (found && duckdb_v2_function_bind_get_arg_value(info, index, &v, NULL) == DUCKDB_V2_ERROR_NONE &&
+	    duckdb_v2_value_get_varchar(v, &t, &l, NULL) == DUCKDB_V2_ERROR_NONE && t) {
+		snprintf(out, cap, "%.*s", (int)l, t);
+	}
+	duckdb_v2_value_destroy(&v);
+}
+
+/* checks and loads a child, then makes the call return one row with its name: shared by load_extension and
+ * install_and_load_extension */
+static void check_and_load(duckdb_v2_function_bind_info_handle info, duckdb_v2_table_function_bind_info_handle result,
+                           duckdb_v2_context_handle context, duckdb_v2_error_info_handle *err, const char *path,
+                           const char *repo) {
+	char error[1024] = "", name[256] = "";
+	if (!shim_verify_child(context, path, repo, SHIM_CONTRACT_VERSION, error, sizeof(error))) {
 		char what[4200];
-		snprintf(what, sizeof(what), "refusing %s", buf);
+		snprintf(what, sizeof(what), "refusing %s", path);
 		report(err, what, error);
 		return;
 	}
 	child_init_fn init = NULL;
-	void *lib = open_child(buf, name, sizeof(name), &init, error, sizeof(error));
-	if (!lib) { report(err, buf, error); return; }
+	void *lib = open_child(path, name, sizeof(name), &init, error, sizeof(error));
+	if (!lib) { report(err, path, error); return; }
 	pending_child = init;
 	pending_lib = lib;
 	snprintf(pending_offer, sizeof(pending_offer), "%s_duckdb_shim_extra", name);
-	if (!shim_invoke_child(context, name, buf, lib, error, sizeof(error))) { report(err, buf, error); return; }
+	if (!shim_invoke_child(context, name, path, lib, error, sizeof(error))) { report(err, path, error); return; }
 	duckdb_v2_factory_handle factory = NULL;
 	duckdb_v2_logical_type_handle varchar = NULL;
 	duckdb_v2_context_get_factory(context, &factory, NULL);
@@ -153,6 +160,30 @@ static void load_bind(duckdb_v2_function_bind_info_handle info, duckdb_v2_table_
 	snprintf(state->name, sizeof(state->name), "%s", name);
 	duckdb_v2_opaque data = {state, free_state, NULL};
 	duckdb_v2_function_bind_set_bind_data(info, &data, NULL);
+}
+
+/* load_extension(path, repo := ...) */
+static void load_bind(duckdb_v2_function_bind_info_handle info, duckdb_v2_table_function_bind_info_handle result,
+                      duckdb_v2_context_handle context, duckdb_v2_error_info_handle *err) {
+	char path[4096], repo[256];
+	arg_text(info, 0, NULL, path, sizeof(path));
+	arg_text(info, 0, "repo", repo, sizeof(repo));
+	if (!path[0]) { report(err, "load_extension", "expects a path"); return; }
+	check_and_load(info, result, context, err, path, repo);
+}
+
+/* install_and_load_extension(name, repo): fetched for this loader's contract from the repository, then as above */
+static void install_bind(duckdb_v2_function_bind_info_handle info, duckdb_v2_table_function_bind_info_handle result,
+                         duckdb_v2_context_handle context, duckdb_v2_error_info_handle *err) {
+	char name[256], repo[256], path[4096], error[1024] = "";
+	arg_text(info, 0, NULL, name, sizeof(name));
+	arg_text(info, 1, NULL, repo, sizeof(repo));
+	if (!name[0] || !repo[0]) { report(err, "install_and_load_extension", "expects a name and a repository"); return; }
+	if (!shim_install_child(context, name, repo, SHIM_CONTRACT_VERSION, path, sizeof(path), error, sizeof(error))) {
+		report(err, name, error);
+		return;
+	}
+	check_and_load(info, result, context, err, path, repo);
 }
 
 static void load_exec(duckdb_v2_table_function_exec_info_handle info, duckdb_v2_context_handle context,
@@ -199,10 +230,30 @@ static void register_load_extension(duckdb_v2_extension_handle extension, duckdb
 	duckdb_v2_logical_type_destroy(&varchar);
 }
 
+static void register_install_and_load(duckdb_v2_extension_handle extension, duckdb_v2_context_handle context) {
+	duckdb_v2_factory_handle factory = NULL;
+	duckdb_v2_table_function_handle fn = NULL;
+	duckdb_v2_function_signature_handle sig = NULL;
+	duckdb_v2_logical_type_handle varchar = NULL;
+	duckdb_v2_context_get_factory(context, &factory, NULL);
+	duckdb_v2_factory_create_type_from_id(factory, DUCKDB_V2_LOGICAL_TYPE_ID_VARCHAR, NULL, NULL, NULL, 0, &varchar, NULL);
+	duckdb_v2_table_function_create(factory, &fn, NULL);
+	duckdb_v2_table_function_set_name(fn, "install_and_load_extension", 26, NULL);
+	duckdb_v2_table_function_get_signature(fn, &sig, NULL);
+	duckdb_v2_function_signature_add_parameter(sig, "name", 4, varchar, NULL, DUCKDB_V2_FUNCTION_PARAMETER_KIND_STANDARD, NULL);
+	duckdb_v2_function_signature_add_parameter(sig, "repo", 4, varchar, NULL, DUCKDB_V2_FUNCTION_PARAMETER_KIND_STANDARD, NULL);
+	duckdb_v2_table_function_set_bind_callback(fn, install_bind, NULL);
+	duckdb_v2_table_function_set_exec_callback(fn, load_exec, NULL);
+	duckdb_v2_extension_register_table_function(extension, fn, NULL);
+	duckdb_v2_table_function_destroy(&fn);
+	duckdb_v2_logical_type_destroy(&varchar);
+}
+
 DUCKDB_EXTENSION_ENTRYPOINT(duckdb_v2_extension_handle extension, duckdb_v2_context_handle context,
                             duckdb_v2_error_info_handle *err) {
 	shim_register_info(extension, context);
 	register_load_extension(extension, context);
+	register_install_and_load(extension, context);
 	shim_describe_self(context, DUCKDB_EXTENSION_STR(DUCKDB_EXTENSION_NAME), SHIM_CONTRACT_VERSION);
 	const char *path = getenv("V2_CAPI_SHIM_LOAD");
 	if (!path || !*path) return;
