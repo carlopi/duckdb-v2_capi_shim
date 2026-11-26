@@ -1,7 +1,14 @@
 /* v2_capi_shim, built against the target's (main's) headers: loads one extension built against the v2.0.1 contract and
  * hands it the v2.0.1 function table, implemented on top of the target's. The child is named by V2_CAPI_SHIM_LOAD
  * (a path); its entrypoint is <file name up to the first dot>_init_c_api_v2. */
-#define DUCKDB_EXTENSION_NAME v2_capi_shim
+/* one loader per contract, named after it: built with -DDUCKDB_EXTENSION_NAME=v2_capi_shim_v201
+ * -DSHIM_CONTRACT_VERSION='"v2.0.1"' (the defaults) */
+#ifndef DUCKDB_EXTENSION_NAME
+#define DUCKDB_EXTENSION_NAME v2_capi_shim_v201
+#endif
+#ifndef SHIM_CONTRACT_VERSION
+#define SHIM_CONTRACT_VERSION "v2.0.1"
+#endif
 #include "duckdb_extension_v2.h"
 DUCKDB_EXTENSION_EXTERN
 #include <dlfcn.h>
@@ -32,7 +39,7 @@ static const void *contract_get_api(duckdb_v2_extension_handle extension, const 
 
 static void report(duckdb_v2_error_info_handle *err, const char *what, const char *detail) {
 	char text[1024];
-	snprintf(text, sizeof(text), "v2_capi_shim: %s: %s", what, detail ? detail : "");
+	snprintf(text, sizeof(text), DUCKDB_EXTENSION_STR(DUCKDB_EXTENSION_NAME) ": %s: %s", what, detail ? detail : "");
 	duckdb_v2_error_info_set_code(*err, DUCKDB_V2_ERROR_INPUT_INVALID);
 #ifdef SHIM_TARGET_STR_STRUCT /* a target that still takes duckdb_v2_str (v2.0.x) */
 	duckdb_v2_str t = {text, strlen(text)};

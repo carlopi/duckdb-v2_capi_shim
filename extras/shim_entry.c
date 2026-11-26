@@ -3,7 +3,14 @@
  *   at LOAD:  the child named by V2_CAPI_SHIM_LOAD (a path), if set
  *   later:    SELECT * FROM load_extension('path')
  * A child's entrypoint is <file name up to the first dot>_init_c_api_v2. */
-#define DUCKDB_EXTENSION_NAME v2_capi_shim
+/* one loader per contract, named after it: built with -DDUCKDB_EXTENSION_NAME=v2_capi_shim_v201
+ * -DSHIM_CONTRACT_VERSION='"v2.0.1"' (the defaults) */
+#ifndef DUCKDB_EXTENSION_NAME
+#define DUCKDB_EXTENSION_NAME v2_capi_shim_v201
+#endif
+#ifndef SHIM_CONTRACT_VERSION
+#define SHIM_CONTRACT_VERSION "v2.0.1"
+#endif
 #include "duckdb_extension_v2.h"
 DUCKDB_EXTENSION_EXTERN
 #include "shim_extra.h"
@@ -15,9 +22,7 @@ DUCKDB_EXTENSION_EXTERN
 extern const char compat_table[];        /* the v2.0.1-layout table (compat_table.c) */
 void shim_offer_all(duckdb_shim_offer_fn offer); /* shim_extra.cpp */
 bool shim_verify_child(duckdb_v2_context_handle ctx, const char *path, const char *repo, const char *contract, char *error, uint64_t cap);
-#ifndef SHIM_CONTRACT_VERSION
-#define SHIM_CONTRACT_VERSION "v2.0.1"
-#endif
+void shim_describe_self(duckdb_v2_context_handle ctx, const char *name, const char *contract);
 bool shim_invoke_child(duckdb_v2_context_handle ctx, const char *name, const char *path, void *lib, char *error, uint64_t cap);
 
 /* set when the child fetched its table: DuckDB refuses an extension that never does, and so does the loader */
@@ -40,7 +45,7 @@ static const void *contract_get_api(duckdb_v2_extension_handle extension, const 
 
 static void report(duckdb_v2_error_info_handle *err, const char *what, const char *detail) {
 	char text[1024];
-	snprintf(text, sizeof(text), "v2_capi_shim: %s: %s", what, detail ? detail : "");
+	snprintf(text, sizeof(text), DUCKDB_EXTENSION_STR(DUCKDB_EXTENSION_NAME) ": %s: %s", what, detail ? detail : "");
 	duckdb_v2_error_info_set_code(*err, DUCKDB_V2_ERROR_INPUT_INVALID);
 	duckdb_v2_error_info_set_text(*err, text, strlen(text));
 }
@@ -120,7 +125,7 @@ static void load_bind(duckdb_v2_function_bind_info_handle info, duckdb_v2_table_
 		duckdb_v2_value_destroy(&rv);
 	}
 	if (!shim_verify_child(context, buf, repo, SHIM_CONTRACT_VERSION, error, sizeof(error))) {
-		char what[1200];
+		char what[4200];
 		snprintf(what, sizeof(what), "refusing %s", buf);
 		report(err, what, error);
 		return;
@@ -191,6 +196,7 @@ static void register_load_extension(duckdb_v2_extension_handle extension, duckdb
 DUCKDB_EXTENSION_ENTRYPOINT(duckdb_v2_extension_handle extension, duckdb_v2_context_handle context,
                             duckdb_v2_error_info_handle *err) {
 	register_load_extension(extension, context);
+	shim_describe_self(context, DUCKDB_EXTENSION_STR(DUCKDB_EXTENSION_NAME), SHIM_CONTRACT_VERSION);
 	const char *path = getenv("V2_CAPI_SHIM_LOAD");
 	if (!path || !*path) return;
 	char error[1024], name[256];

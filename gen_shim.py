@@ -139,7 +139,8 @@ if 'duckdb_v2_text_sink_fn' in changed_cb:
     hdr.append('static void compat_text_sink_tramp(const char *p, idx_t l, void *c, duckdb_v2_error_info_handle *e) { compat_v2_str s = {p, l}; ((compat_v2_text_sink_fn)((compat_cb_ctx *)c)->cb)(&s, ((compat_cb_ctx *)c)->ud, e); }')
 if 'duckdb_v2_file_system_path_glob_callback_fn' in changed_cb:
     hdr.append('static void compat_glob_tramp(const char *p, idx_t l, void *c, duckdb_v2_error_info_handle *e) { compat_v2_str s = {p, l}; ((compat_v2_file_system_path_glob_callback_fn)((compat_cb_ctx *)c)->cb)(&s, ((compat_cb_ctx *)c)->ud, e); }')
-hdr += ['#define COMPAT_UNPACK(a, n) const char **a##_p = (const char **)malloc(sizeof(char *) * ((n) + 1)); idx_t *a##_l = (idx_t *)malloc(sizeof(idx_t) * ((n) + 1)); for (idx_t k_ = 0; a && k_ < (n); k_++) { a##_p[k_] = a[k_].ptr; a##_l[k_] = a[k_].len; }',
+# an array of string structs -> two parallel arrays; a NULL array stays NULL (e.g. type parameters without names)
+hdr += ['#define COMPAT_UNPACK(a, n) const char **a##_p = NULL; idx_t *a##_l = NULL; if (a) { a##_p = (const char **)malloc(sizeof(char *) * ((n) + 1)); a##_l = (idx_t *)malloc(sizeof(idx_t) * ((n) + 1)); for (idx_t k_ = 0; k_ < (n); k_++) { a##_p[k_] = a[k_].ptr; a##_l[k_] = a[k_].len; } }',
         '#define COMPAT_FREE(a) free((void *)a##_p); free(a##_l);']
 open('shim.c', 'w').write('\n'.join(hdr) + '\n' + '\n'.join(out) + '\n')
 open('manual.txt', 'w').write('\n'.join(manual) + ('\n' if manual else ''))

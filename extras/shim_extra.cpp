@@ -20,6 +20,17 @@ extern "C" {
 
 using namespace duckdb;
 
+#ifndef SHIM_CONTRACT_VERSION
+#define SHIM_CONTRACT_VERSION "v2.0.1"
+#endif
+#ifndef DUCKDB_EXTENSION_NAME
+#define DUCKDB_EXTENSION_NAME v2_capi_shim_v201
+#endif
+#define SHIM_STR2(x) #x
+#define SHIM_STR(x) SHIM_STR2(x)
+static const char *SHIM_CONTRACT = SHIM_CONTRACT_VERSION;
+static const char *SHIM_LOADER = SHIM_STR(DUCKDB_EXTENSION_NAME);
+
 namespace {
 
 ClientContext &ContextOf(struct _duckdb_v2_context *ctx) {
@@ -150,6 +161,30 @@ bool shim_verify_child(struct _duckdb_v2_context *ctx, const char *path, const c
 	}
 }
 
+//! The description duckdb_extensions() shows for an extension (v2 has no call for it; this is what
+//! ExtensionLoader::SetDescription does for a C++ extension)
+static void Describe(DatabaseInstance &db, const std::string &name, const std::string &description) {
+	auto info = ExtensionManager::Get(db).GetExtensionInfo(name);
+	if (info) {
+		auto loaded = make_uniq<ExtensionLoadedInfo>();
+		loaded->description = description;
+		info->load_info = std::move(loaded);
+	}
+}
+
+void shim_describe_self(struct _duckdb_v2_context *ctx, const char *name, const char *contract) {
+	try {
+		auto &db = *ContextOf(ctx).db;
+		Describe(db, name,
+		         std::string("C API v2 bridge: runs v2 extensions built for DuckDB ") + contract + " on this DuckDB (" +
+		             DuckDB::LibraryVersion() + ", " + DuckDB::SourceID() +
+		             "), through the " + contract + " function table; offers the capabilities connections/1 and "
+		             "interrupts/1. SELECT * FROM load_extension(path, repo := 'community') checks the footer and the "
+		             "repository's signature, then loads");
+	} catch (...) { // NOLINT: a description is not worth failing a load
+	}
+}
+
 // set by the loader for the duration of one InvokeCAPIV2Entrypoint: the child entrypoint the trampoline forwards to
 extern void shim_forward_child(::duckdb_v2_extension_input *input);
 
@@ -175,11 +210,23 @@ bool shim_invoke_child(struct _duckdb_v2_context *ctx, const char *name, const c
 			load->LoadFail(ErrorData(ex));
 			throw;
 		}
+		// the child's own version, from its footer
+		std::string version = "unknown";
+		try {
+			auto handle = FileSystem::GetFileSystem(context).OpenFile(path, FileFlags::FILE_FLAGS_READ);
+			auto meta = ExtensionHelper::ParseExtensionMetaData(*handle);
+			if (meta.AppearsValid() && !meta.extension_version.empty()) {
+				version = meta.extension_version;
+			}
+		} catch (...) { // NOLINT: a version is not worth failing a load
+		}
 		ExtensionInstallInfo install;
 		install.mode = ExtensionInstallMode::NOT_INSTALLED;
 		install.full_path = path;
-		install.version = "default-version";
+		install.version = version;
 		load->FinishLoad(install, path);
+		Describe(*context.db, name, std::string("v2 extension built for DuckDB ") + SHIM_CONTRACT + ", loaded through " +
+		                                SHIM_LOADER + " from " + path);
 		return true;
 	} catch (std::exception &e) {
 		SetError(error, error_capacity, e.what());
