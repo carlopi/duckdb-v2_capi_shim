@@ -36,6 +36,21 @@ Beyond the contract, the shim offers capabilities a child can take (it exports `
 table)`; DuckDB itself never calls it): `connections/1` (SQL from a callback's context) and `interrupts/1` (whether
 the query was interrupted). See `src/include/shim_extra.h`.
 
+## CI: build it for a given DuckDB
+
+`.github/workflows/build.yml` builds DuckDB at a ref with the shim, runs `tests/run.sh` (a v2 extension built against
+the contract, loaded through the shim; what the shim reports; what it refuses), and uploads
+`v2_capi_shim-<ref>-<duckdb sha>-<platform>` (linux and macOS). Which DuckDB:
+
+- by hand: run the workflow with `duckdb_ref` (a tag, branch or commit)
+- by callback, e.g. from whatever publishes a DuckDB nightly or release:
+  `POST /repos/<owner>/v2_capi_shim/dispatches` with
+  `{"event_type": "build-for-duckdb", "client_payload": {"duckdb_ref": "<sha or tag>"}}`
+  (`duckdb-nightly`, `duckdb-release` work the same; the sender needs a token allowed to dispatch to this repository)
+- otherwise (push, pull request, nightly schedule): `v2.0.1` and `main`
+
+`tests/run.sh <duckdb> <v2_capi_shim.duckdb_extension>` runs the same test against any build.
+
 ## Layout
 
 | | |
@@ -46,6 +61,8 @@ the query was interrupted). See `src/include/shim_extra.h`.
 | `contracts/<version>/` | the contract: that release's `duckdb_v2.h`, `duckdb_extension_v2.h`, `api_spec/v2` (MIT, DuckDB) |
 | `pairs/` | values for parameters a target added, per contract and target |
 | `scripts/append_extension_metadata.py` | footer writer, from duckdb/extension-ci-tools (MIT) |
+| `tests/` | `child.c` (a v2.0.1 extension) and `run.sh` |
+| `.github/workflows/build.yml` | CI |
 | `docs/design.md` | what the spike found: the diffs, the rules, the tests |
 | `spike/` | the spike's hand-built bridges and Docker runs |
 
