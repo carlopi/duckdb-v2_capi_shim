@@ -65,6 +65,8 @@ jobs:
       ci_tools_version: main
       extension_name: v2_capi_shim
       exclude_archs: "windows_amd64;windows_amd64_mingw;windows_arm64;wasm_mvp;wasm_eh;wasm_threads"
+      # opt-in in extension-ci-tools' matrix
+      opt_in_archs: "osx_amd64"
 
   # The same shim across DuckDB versions: for every v2 release and every main commit that changed duckdb_v2.h, the
   # adapters generated and compiled against that commit's headers alone (no DuckDB build, about a minute). A table in
