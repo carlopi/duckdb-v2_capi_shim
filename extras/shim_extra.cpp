@@ -24,7 +24,7 @@ using namespace duckdb;
 #define SHIM_CONTRACT_VERSION "v2.0.1"
 #endif
 #ifndef DUCKDB_EXTENSION_NAME
-#define DUCKDB_EXTENSION_NAME v2_capi_shim_v201
+#define DUCKDB_EXTENSION_NAME v2_capi_shim
 #endif
 #define SHIM_STR2(x) #x
 #define SHIM_STR(x) SHIM_STR2(x)

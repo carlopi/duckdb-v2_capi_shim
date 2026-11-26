@@ -1,10 +1,11 @@
 /* v2_capi_shim, built against the target's (main's) headers: loads one extension built against the v2.0.1 contract and
  * hands it the v2.0.1 function table, implemented on top of the target's. The child is named by V2_CAPI_SHIM_LOAD
  * (a path); its entrypoint is <file name up to the first dot>_init_c_api_v2. */
-/* one loader per contract, named after it: built with -DDUCKDB_EXTENSION_NAME=v2_capi_shim_v201
+/* the contract is baked in per build (-DSHIM_CONTRACT_VERSION, default v2.0.1; it shows in the footer version and
+ * the description); the extension is always v2_capi_shim. Built with -DDUCKDB_EXTENSION_NAME=v2_capi_shim
  * -DSHIM_CONTRACT_VERSION='"v2.0.1"' (the defaults) */
 #ifndef DUCKDB_EXTENSION_NAME
-#define DUCKDB_EXTENSION_NAME v2_capi_shim_v201
+#define DUCKDB_EXTENSION_NAME v2_capi_shim
 #endif
 #ifndef SHIM_CONTRACT_VERSION
 #define SHIM_CONTRACT_VERSION "v2.0.1"

@@ -15,14 +15,14 @@ gcc -fPIC -c -std=c11 $U -Wall -Werror -Wno-unused-function -I $T -I $O -include
 gcc -fPIC -c -std=c11 $U -Wall -Werror -I $T -include tools/capi-compat/runtime/target_prelude.h tools/capi-compat/compat_manual.c -o $B/manual.o
 gcc -fPIC -c -std=c11 $U -DDUCKDB_BUILD_STATIC_EXTENSION -Wall -Werror -I $C $O/compat_table.c -o $B/table.o
 gcc -fPIC -c -std=gnu11 $U -Wall -Werror -I $T tools/capi-compat/runtime/shim_entry.c -o $B/entry.o
-gcc -shared -o $B/v2_capi_shim_v201.so $B/entry.o $B/shim.o $B/manual.o $B/table.o -ldl -lpthread
+gcc -shared -o $B/v2_capi_shim.so $B/entry.o $B/shim.o $B/manual.o $B/table.o -ldl -lpthread
 V=$('"$S"'/build-main/duckdb -csv -noheader -c "SELECT source_id FROM pragma_version()")
-python3 extension-ci-tools/scripts/append_extension_metadata.py -l $B/v2_capi_shim_v201.so -n v2_capi_shim_v201 -o $B/v2_capi_shim_v201.duckdb_extension -p linux_arm64 -dv "$V" -ev "v2.0.1-on-$V" --abi-type C_STRUCT_UNSTABLE >/dev/null
-echo "target: $('"$S"'/build-main/duckdb -csv -noheader -c "SELECT library_version || chr(32) || source_id FROM pragma_version()")  bridge: $(stat -c %s $B/v2_capi_shim_v201.duckdb_extension) bytes"
+python3 extension-ci-tools/scripts/append_extension_metadata.py -l $B/v2_capi_shim.so -n v2_capi_shim -o $B/v2_capi_shim.duckdb_extension -p linux_arm64 -dv "$V" -ev "v2.0.1-on-$V" --abi-type C_STRUCT_UNSTABLE >/dev/null
+echo "target: $('"$S"'/build-main/duckdb -csv -noheader -c "SELECT library_version || chr(32) || source_id FROM pragma_version()")  bridge: $(stat -c %s $B/v2_capi_shim.duckdb_extension) bytes"
 echo "== directly:"
 '"$S"'/build-main/duckdb -unsigned -c "LOAD '"'$EXT'"';" 2>&1 | head -2 || true
 echo "== through the bridge:"
-V2_CAPI_SHIM_LOAD='"$EXT"' '"$S"'/build-main/duckdb -unsigned -csv -cmd "LOAD '"'"'$B/v2_capi_shim_v201.duckdb_extension'"'"';" -f '"$S"'/rusty_queries.sql > '"$S"'/actual_main.csv 2>&1
+V2_CAPI_SHIM_LOAD='"$EXT"' '"$S"'/build-main/duckdb -unsigned -csv -cmd "LOAD '"'"'$B/v2_capi_shim.duckdb_extension'"'"';" -f '"$S"'/rusty_queries.sql > '"$S"'/actual_main.csv 2>&1
 cat '"$S"'/actual_main.csv
 '
 echo "== diff against v2.0.1 natively (warning lines aside):"

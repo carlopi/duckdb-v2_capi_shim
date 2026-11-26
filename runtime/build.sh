@@ -11,8 +11,8 @@ clang -fPIC -c -std=c11 $U -Wall -Werror -Wno-unused-function -I "$T" -I $O -inc
 clang -fPIC -c -std=c11 $U -Wall -Werror -I "$T" -include $R/target_prelude.h tools/capi-compat/compat_manual.c -o $B/manual.o
 clang -fPIC -c -std=c11 $U -DDUCKDB_BUILD_STATIC_EXTENSION -Wall -Werror -I $C $O/compat_table.c -o $B/table.o
 clang -fPIC -c -std=c11 $U -Wall -Werror -I "$T" $R/shim_entry.c -o $B/entry.o
-clang -shared -o $B/v2_capi_shim_v201.dylib $B/entry.o $B/shim.o $B/manual.o $B/table.o
+clang -shared -o $B/v2_capi_shim.dylib $B/entry.o $B/shim.o $B/manual.o $B/table.o
 clang -fPIC -shared -std=c11 $U -Wall -Werror -I $C $R/child.c -o $B/child.duckdb_extension
-python3 extension-ci-tools/scripts/append_extension_metadata.py -l $B/v2_capi_shim_v201.dylib -n v2_capi_shim_v201 \
-	-o $B/v2_capi_shim_v201.duckdb_extension -p osx_arm64 -dv "$TV" -ev "v2.0.1-on-$TV" --abi-type C_STRUCT_UNSTABLE > /dev/null
-ls -la $B/v2_capi_shim_v201.duckdb_extension $B/child.duckdb_extension
+python3 extension-ci-tools/scripts/append_extension_metadata.py -l $B/v2_capi_shim.dylib -n v2_capi_shim \
+	-o $B/v2_capi_shim.duckdb_extension -p osx_arm64 -dv "$TV" -ev "v2.0.1-on-$TV" --abi-type C_STRUCT_UNSTABLE > /dev/null
+ls -la $B/v2_capi_shim.duckdb_extension $B/child.duckdb_extension
