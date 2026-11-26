@@ -36,6 +36,19 @@ Beyond the contract, the shim offers capabilities a child can take (it exports `
 table)`; DuckDB itself never calls it): `connections/1` (SQL from a callback's context) and `interrupts/1` (whether
 the query was interrupted). See `src/include/shim_extra.h`.
 
+## Build it on its own
+
+The shim is a C++ extension, built inside a DuckDB source tree: any DuckDB you want it for, checked out as `duckdb/`
+(not a submodule: the shim belongs to no one DuckDB, and CI checks out the one it builds for):
+
+```sh
+git submodule update --init                                    # extension-ci-tools
+git clone --branch v2.0.1 https://github.com/duckdb/duckdb     # or any DuckDB with the v2 C API
+GEN=ninja make                                                 # build/release/duckdb, .../v2_capi_shim.duckdb_extension
+make test                                                      # test/sql
+make test_shim                                                 # tests/run.sh: a v2.0.1 extension loaded through it
+```
+
 ## CI: build it for a given DuckDB
 
 `.github/workflows/build.yml` builds the shim with extension-ci-tools' distribution workflow (DuckDB's own build
@@ -65,7 +78,7 @@ its own key, and serves them (GitHub Pages) at `<version>/<platform>/v2_capi_shi
 | `generate.py`, `gen_shim.py`, `parse_header.py`, `compat_manual.c` | the generator, Python only, and the hand-written adapters |
 | `contracts/<version>/` | the contract: that release's `duckdb_v2.h`, `duckdb_extension_v2.h`, `api_spec/v2` (MIT, DuckDB) |
 | `pairs/` | values for parameters a target added, per contract and target |
-| `duckdb/`, `extension-ci-tools/` | submodules: DuckDB at the contract (v2.0.1), and DuckDB's extension build tooling |
+| `extension-ci-tools/` | submodule: DuckDB's extension build tooling (the `Makefile` includes its makefiles) |
 | `Makefile`, `test/sql/` | the extension template's build (`make`, `make test`); `make test_shim` runs `tests/run.sh` |
 | `tests/` | `child.c` (a v2.0.1 extension) and `run.sh` |
 | `.github/workflows/build.yml` | CI |
