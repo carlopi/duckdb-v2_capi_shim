@@ -118,67 +118,27 @@ jobs:
           name: v2_capi_shim-${{ env.SAFE_REF }}-${{ env.DUCKDB_SHA }}-${{ env.PLATFORM }}
           path: artifact/
 
-  # Signed with the extension repository's key and committed to its main branch, which GitHub Pages serves as
-  # https://carlopi.github.io/example-duckdb-extension-repository, at <version dir>/<platform>/v2_capi_shim.duckdb_extension.gz.
-  # Needs, in this repository's secrets: EXTENSION_REPO_SIGNING_KEY (the PEM private key whose public key is in that
-  # repository's .well-known/duckdb-extension-repo.json) and EXTENSION_REPO_SSH_KEY (the private half of a deploy key with write access on it).
-  # Not for pull requests; without the secrets it says so and does nothing.
-  publish:
+  # Asks carlopi/example-duckdb-extension-repository to publish this run's builds: it checks the run (listed producer,
+  # succeeded, allowed branch), signs them with its own key, and commits them to its main, which GitHub Pages serves.
+  # Needs, in this repository's secrets: EXTENSION_REPO_DISPATCH_TOKEN (a token allowed to dispatch to that repository:
+  # fine-grained, Contents read and write on it only) and EXTENSION_REPO_PUBLISH_TOKEN (this producer's publish token,
+  # whose SHA-256 that repository's sources.json lists). Not for pull requests; without the secrets it does nothing.
+  notify:
     needs: build
     if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch')
     runs-on: ubuntu-latest
-    concurrency:
-      group: publish-extension-repository
-      cancel-in-progress: false
     steps:
-      - name: Secrets present?
-        id: secrets
+      - name: Ask the extension repository to publish
         env:
-          KEY: ${{ secrets.EXTENSION_REPO_SIGNING_KEY }}
-          SSH_KEY: ${{ secrets.EXTENSION_REPO_SSH_KEY }}
+          GH_TOKEN: ${{ secrets.EXTENSION_REPO_DISPATCH_TOKEN }}
+          PUBLISH_TOKEN: ${{ secrets.EXTENSION_REPO_PUBLISH_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN: ${{ github.run_id }}
         run: |
-          if [ -n "$KEY" ] && [ -n "$SSH_KEY" ]; then echo "ok=1" >> "$GITHUB_OUTPUT"; else
-            echo "::notice::EXTENSION_REPO_SIGNING_KEY / EXTENSION_REPO_SSH_KEY not set: nothing published"; echo "ok=0" >> "$GITHUB_OUTPUT"; fi
-
-      - uses: actions/download-artifact@v4
-        if: steps.secrets.outputs.ok == '1'
-        with:
-          pattern: v2_capi_shim-*
-          path: built
-
-      - uses: actions/checkout@v4
-        if: steps.secrets.outputs.ok == '1'
-        with:
-          repository: carlopi/example-duckdb-extension-repository
-          ref: main
-          ssh-key: ${{ secrets.EXTENSION_REPO_SSH_KEY }}
-          path: repo
-
-      - name: Sign, place, commit, push
-        if: steps.secrets.outputs.ok == '1'
-        env:
-          KEY: ${{ secrets.EXTENSION_REPO_SIGNING_KEY }}
-          SHIM_SHA: ${{ github.sha }}
-        run: |
-          umask 077
-          key="$RUNNER_TEMP/signing-key.pem"
-          printf '%s\n' "$KEY" > "$key"
-          trap 'rm -f "$key"' EXIT
-          cd repo
-          git config user.name "v2_capi_shim CI"
-          git config user.email "v2_capi_shim-ci@users.noreply.github.com"
-          placed=""
-          for d in ../built/*/; do
-            dir=$(sed -n 1p "$d/target.txt"); platform=$(sed -n 2p "$d/target.txt"); duckdb_sha=$(sed -n 3p "$d/target.txt")
-            # DuckDB's build wrote the footer with an empty signature: replace those 256 bytes with the repository's
-            RESIGN=1 scripts/sign-extension.sh "$key" "$d/v2_capi_shim.duckdb_extension" "$dir" "$platform"
-            placed="$placed $dir/$platform (duckdb ${duckdb_sha:0:10})"
-          done
-          git add -A
-          if git diff --cached --quiet; then echo "nothing changed"; exit 0; fi
-          git commit -q -m "v2_capi_shim ${SHIM_SHA:0:7}:$placed"
-          for attempt in 1 2 3 4 5; do
-            git push -q origin HEAD:main && exit 0
-            git pull -q --rebase origin main
-          done
-          exit 1
+          if [ -z "$GH_TOKEN" ] || [ -z "$PUBLISH_TOKEN" ]; then
+            echo "::notice::EXTENSION_REPO_DISPATCH_TOKEN / EXTENSION_REPO_PUBLISH_TOKEN not set: not asking to publish"; exit 0
+          fi
+          jq -n --arg repo "$REPO" --argjson run "$RUN" --arg token "$PUBLISH_TOKEN" \
+            '{event_type: "publish-extensions", client_payload: {repository: $repo, run_id: $run, token: $token}}' |
+            gh api repos/carlopi/example-duckdb-extension-repository/dispatches --input -
+          echo "asked carlopi/example-duckdb-extension-repository to publish run $RUN"

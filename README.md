@@ -49,6 +49,11 @@ the contract, loaded through the shim; what the shim reports; what it refuses), 
   (`duckdb-nightly`, `duckdb-release` work the same; the sender needs a token allowed to dispatch to this repository)
 - otherwise (push, pull request, nightly schedule): `v2.0.1` and `main`
 
+Builds on `main` (and by hand or callback) are then published: the `notify` job asks
+`carlopi/example-duckdb-extension-repository` to publish the run; that repository checks the run, signs the builds with
+its own key, and serves them (GitHub Pages) at `<version>/<platform>/v2_capi_shim.duckdb_extension.gz`. Then:
+`CREATE EXTENSION REPOSITORY carlopi.github.io; INSTALL AND LOAD v2_capi_shim FROM carlopi.github.io;`
+
 `tests/run.sh <duckdb> <v2_capi_shim.duckdb_extension>` runs the same test against any build.
 
 ## Layout
