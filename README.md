@@ -44,7 +44,7 @@ the contract, loaded through the shim; what the shim reports; what it refuses), 
 
 - by hand: run the workflow with `duckdb_ref` (a tag, branch or commit)
 - by callback, e.g. from whatever publishes a DuckDB nightly or release:
-  `POST /repos/<owner>/v2_capi_shim/dispatches` with
+  `POST /repos/carlopi/duckdb-v2_capi_shim/dispatches` with
   `{"event_type": "build-for-duckdb", "client_payload": {"duckdb_ref": "<sha or tag>"}}`
   (`duckdb-nightly`, `duckdb-release` work the same; the sender needs a token allowed to dispatch to this repository)
 - otherwise (push, pull request, nightly schedule): `v2.0.1` and `main`

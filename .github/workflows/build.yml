@@ -5,7 +5,7 @@
 # Which DuckDB:
 #   - workflow_dispatch: the duckdb_ref input (a tag, branch or commit)
 #   - repository_dispatch (a callback, e.g. from whatever publishes a DuckDB nightly or release):
-#       POST /repos/<owner>/v2_capi_shim/dispatches
+#       POST /repos/carlopi/duckdb-v2_capi_shim/dispatches
 #       {"event_type": "build-for-duckdb", "client_payload": {"duckdb_ref": "<sha or tag>"}}
 #     (event types duckdb-nightly and duckdb-release work the same)
 #   - push, pull_request, schedule: v2.0.1 (the contract) and main
@@ -100,10 +100,85 @@ jobs:
         env:
           REF: ${{ matrix.duckdb_ref }}
         run: |
-          echo "PLATFORM=$(duckdb/build/release/duckdb -csv -noheader -c 'PRAGMA platform')" >> "$GITHUB_ENV"
+          D=duckdb/build/release/duckdb
+          echo "PLATFORM=$($D -csv -noheader -c 'PRAGMA platform')" >> "$GITHUB_ENV"
           echo "SAFE_REF=$(printf '%s' "$REF" | tr '/' '-')" >> "$GITHUB_ENV"
+          # where INSTALL looks for it, by DuckDB's own rule: a release's version tag, else its source id
+          version=$($D -csv -noheader -c 'SELECT library_version FROM pragma_version()')
+          case "$version" in
+            v[0-9]*.[0-9]*.[0-9]*) case "$version" in *-*) dir=$($D -csv -noheader -c 'SELECT source_id FROM pragma_version()') ;; *) dir="$version" ;; esac ;;
+            *) dir=$($D -csv -noheader -c 'SELECT source_id FROM pragma_version()') ;;
+          esac
+          mkdir -p artifact
+          cp duckdb/build/release/extension/v2_capi_shim/v2_capi_shim.duckdb_extension artifact/
+          printf '%s\n%s\n%s\n' "$dir" "$($D -csv -noheader -c 'PRAGMA platform')" "$(git -C duckdb rev-parse HEAD)" > artifact/target.txt
 
       - uses: actions/upload-artifact@v4
         with:
           name: v2_capi_shim-${{ env.SAFE_REF }}-${{ env.DUCKDB_SHA }}-${{ env.PLATFORM }}
-          path: duckdb/build/release/extension/v2_capi_shim/v2_capi_shim.duckdb_extension
+          path: artifact/
+
+  # Signed with the extension repository's key and committed to its main branch, which GitHub Pages serves as
+  # https://carlopi.github.io/example-duckdb-extension-repository, at <version dir>/<platform>/v2_capi_shim.duckdb_extension.gz.
+  # Needs, in this repository's secrets: EXTENSION_REPO_SIGNING_KEY (the PEM private key whose public key is in that
+  # repository's .well-known/duckdb-extension-repo.json) and EXTENSION_REPO_TOKEN (a token that may push to it).
+  # Not for pull requests; without the secrets it says so and does nothing.
+  publish:
+    needs: build
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch')
+    runs-on: ubuntu-latest
+    concurrency:
+      group: publish-extension-repository
+      cancel-in-progress: false
+    steps:
+      - name: Secrets present?
+        id: secrets
+        env:
+          KEY: ${{ secrets.EXTENSION_REPO_SIGNING_KEY }}
+          TOKEN: ${{ secrets.EXTENSION_REPO_TOKEN }}
+        run: |
+          if [ -n "$KEY" ] && [ -n "$TOKEN" ]; then echo "ok=1" >> "$GITHUB_OUTPUT"; else
+            echo "::notice::EXTENSION_REPO_SIGNING_KEY / EXTENSION_REPO_TOKEN not set: nothing published"; echo "ok=0" >> "$GITHUB_OUTPUT"; fi
+
+      - uses: actions/download-artifact@v4
+        if: steps.secrets.outputs.ok == '1'
+        with:
+          pattern: v2_capi_shim-*
+          path: built
+
+      - uses: actions/checkout@v4
+        if: steps.secrets.outputs.ok == '1'
+        with:
+          repository: carlopi/example-duckdb-extension-repository
+          ref: main
+          token: ${{ secrets.EXTENSION_REPO_TOKEN }}
+          path: repo
+
+      - name: Sign, place, commit, push
+        if: steps.secrets.outputs.ok == '1'
+        env:
+          KEY: ${{ secrets.EXTENSION_REPO_SIGNING_KEY }}
+          SHIM_SHA: ${{ github.sha }}
+        run: |
+          umask 077
+          key="$RUNNER_TEMP/signing-key.pem"
+          printf '%s\n' "$KEY" > "$key"
+          trap 'rm -f "$key"' EXIT
+          cd repo
+          git config user.name "v2_capi_shim CI"
+          git config user.email "v2_capi_shim-ci@users.noreply.github.com"
+          placed=""
+          for d in ../built/*/; do
+            dir=$(sed -n 1p "$d/target.txt"); platform=$(sed -n 2p "$d/target.txt"); duckdb_sha=$(sed -n 3p "$d/target.txt")
+            # DuckDB's build wrote the footer with an empty signature: replace those 256 bytes with the repository's
+            RESIGN=1 scripts/sign-extension.sh "$key" "$d/v2_capi_shim.duckdb_extension" "$dir" "$platform"
+            placed="$placed $dir/$platform (duckdb ${duckdb_sha:0:10})"
+          done
+          git add -A
+          if git diff --cached --quiet; then echo "nothing changed"; exit 0; fi
+          git commit -q -m "v2_capi_shim ${SHIM_SHA:0:7}:$placed"
+          for attempt in 1 2 3 4 5; do
+            git push -q origin HEAD:main && exit 0
+            git pull -q --rebase origin main
+          done
+          exit 1
