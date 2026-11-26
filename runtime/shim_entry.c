@@ -12,17 +12,34 @@ DUCKDB_EXTENSION_EXTERN
 /* the v2.0.1-layout table (compat_table.c, built against the contract's headers) */
 extern const char compat_table[];
 
+/* set when the child fetched its table: DuckDB refuses an extension that never does, and so does the loader */
+static int child_fetched_api;
+/* whether the child already reported a failure in the error slot */
+static int child_failed(duckdb_v2_error_info_handle err) {
+	DUCKDB_V2_ERROR code = DUCKDB_V2_ERROR_NONE;
+	return err && duckdb_v2_error_info_get_code(err, &code) == DUCKDB_V2_ERROR_NONE && code != DUCKDB_V2_ERROR_NONE;
+}
+
 /* get_api as the contract declares it: (extension, version), no length */
 static const void *contract_get_api(duckdb_v2_extension_handle extension, const char *version) {
 	(void)extension;
-	return (version && strncmp(version, "v2.", 3) == 0) ? (const void *)compat_table : NULL;
+	/* like DuckDB's own get_api for a version-pinned extension: the name is the build's identity (a tag or a commit),
+	 * not a request; the contract was chosen by the file's footer */
+	if (getenv("V2_CAPI_SHIM_TRACE")) fprintf(stderr, "v2_capi_shim: get_api('%s')\n", version ? version : "(null)");
+	child_fetched_api = 1;
+	return (const void *)compat_table;
 }
 
 static void report(duckdb_v2_error_info_handle *err, const char *what, const char *detail) {
 	char text[1024];
 	snprintf(text, sizeof(text), "v2_capi_shim: %s: %s", what, detail ? detail : "");
 	duckdb_v2_error_info_set_code(*err, DUCKDB_V2_ERROR_INPUT_INVALID);
+#ifdef SHIM_TARGET_STR_STRUCT /* a target that still takes duckdb_v2_str (v2.0.x) */
+	duckdb_v2_str t = {text, strlen(text)};
+	duckdb_v2_error_info_set_text(*err, &t);
+#else
 	duckdb_v2_error_info_set_text(*err, text, strlen(text));
+#endif
 }
 
 DUCKDB_EXTENSION_ENTRYPOINT(duckdb_v2_extension_handle extension, duckdb_v2_context_handle context,
@@ -52,5 +69,9 @@ DUCKDB_EXTENSION_ENTRYPOINT(duckdb_v2_extension_handle extension, duckdb_v2_cont
 	input.extension = extension;
 	input.context = context;
 	input.err = err;
+	child_fetched_api = 0;
 	init(&input);
+	if (!child_fetched_api && !child_failed(*err)) {
+		report(err, path, "the extension did not fetch its API table (DUCKDB_EXTENSION_API_INIT): refusing it");
+	}
 }

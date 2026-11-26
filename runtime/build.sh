@@ -7,7 +7,7 @@ ROOT="$(cd "$(dirname "$0")/../../.." && pwd)" && cd "$ROOT"
 R=tools/capi-compat/runtime; O=.cache/capi-compat; B=$O/runtime; mkdir -p "$B"
 T="${TARGET_SRC:-.cache/duckdb-main}/src/include"; C=duckdb/src/include
 TV="${TARGET_VERSION:-v2.1.0-dev0}"; U=-DDUCKDB_V2_API_ALLOW_UNSTABLE=1
-clang -fPIC -c -std=c11 $U -Wall -Werror -Wno-unused-function -I "$T" -I $O -include $R/target_prelude.h $O/shim_v201_on_main.c -o $B/shim.o
+clang -fPIC -c -std=c11 $U -Wall -Werror -Wno-unused-function -I "$T" -I $O -include $R/target_prelude.h $O/shim.c -o $B/shim.o
 clang -fPIC -c -std=c11 $U -Wall -Werror -I "$T" -include $R/target_prelude.h tools/capi-compat/compat_manual.c -o $B/manual.o
 clang -fPIC -c -std=c11 $U -DDUCKDB_BUILD_STATIC_EXTENSION -Wall -Werror -I $C $O/compat_table.c -o $B/table.o
 clang -fPIC -c -std=c11 $U -Wall -Werror -I "$T" $R/shim_entry.c -o $B/entry.o

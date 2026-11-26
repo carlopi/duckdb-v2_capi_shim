@@ -16,12 +16,22 @@ extern const char compat_table[];        /* the v2.0.1-layout table (compat_tabl
 void shim_offer_all(duckdb_shim_offer_fn offer); /* shim_extra.cpp */
 bool shim_invoke_child(duckdb_v2_context_handle ctx, const char *name, const char *path, void *lib, char *error, uint64_t cap);
 
+/* set when the child fetched its table: DuckDB refuses an extension that never does, and so does the loader */
+static int child_fetched_api;
+/* whether the child already reported a failure in the error slot */
+static int child_failed(duckdb_v2_error_info_handle err) {
+	DUCKDB_V2_ERROR code = DUCKDB_V2_ERROR_NONE;
+	return err && duckdb_v2_error_info_get_code(err, &code) == DUCKDB_V2_ERROR_NONE && code != DUCKDB_V2_ERROR_NONE;
+}
+
 /* get_api as the contract declares it: (extension, version), no length */
 static const void *contract_get_api(duckdb_v2_extension_handle extension, const char *version) {
 	(void)extension;
-	if (!version) return NULL;
-	if (strncmp(version, "v2.", 3) == 0) return compat_table;
-	return NULL;
+	/* like DuckDB's own get_api for a version-pinned extension: the name is the build's identity (a tag or a commit),
+	 * not a request; the contract was chosen by the file's footer */
+	if (getenv("V2_CAPI_SHIM_TRACE")) fprintf(stderr, "v2_capi_shim: get_api('%s')\n", version ? version : "(null)");
+	child_fetched_api = 1;
+	return compat_table;
 }
 
 static void report(duckdb_v2_error_info_handle *err, const char *what, const char *detail) {
@@ -49,7 +59,11 @@ void shim_forward_child(struct duckdb_v2_extension_input *input) {
 	}
 	struct duckdb_v2_extension_input contract = *input; /* same layout; only get_api's signature differs */
 	contract.get_api = (duckdb_v2_extension_get_api_fn)(void (*)(void))contract_get_api;
+	child_fetched_api = 0;
 	pending_child(&contract);
+	if (!child_fetched_api && !child_failed(*input->err)) {
+		report(input->err, "child", "the extension did not fetch its API table (DUCKDB_EXTENSION_API_INIT): refusing it");
+	}
 }
 
 /* dlopen + entrypoint lookup; returns the library, its name in name (the file base) */
