@@ -1,6 +1,6 @@
-# Builds v2_capi_shim for a given DuckDB: check out DuckDB at that ref, build it with
-#   duckdb_extension_load(v2_capi_shim SOURCE_DIR <this repository>)
-# run tests/run.sh against the result, and upload the extension as an artifact.
+# Builds v2_capi_shim for a given DuckDB with extension-ci-tools' distribution workflow (DuckDB's own build images,
+# Linux and macOS: linux_amd64, linux_arm64, osx_amd64, osx_arm64, and Linux musl), then asks
+# carlopi/example-duckdb-extension-repository to publish the run.
 #
 # Which DuckDB:
 #   - workflow_dispatch: the duckdb_ref input (a tag, branch or commit)
@@ -8,7 +8,7 @@
 #       POST /repos/carlopi/duckdb-v2_capi_shim/dispatches
 #       {"event_type": "build-for-duckdb", "client_payload": {"duckdb_ref": "<sha or tag>"}}
 #     (event types duckdb-nightly and duckdb-release work the same)
-#   - push, pull_request, schedule: v2.0.1 (the contract) and main
+#   - push, pull_request, schedule: v2.0.1 (the contract, with its release tooling) and main
 name: build
 
 on:
@@ -26,10 +26,11 @@ on:
     - cron: "17 3 * * *"
 
 jobs:
-  refs:
+  ref:
     runs-on: ubuntu-latest
     outputs:
-      refs: ${{ steps.pick.outputs.refs }}
+      requested: ${{ steps.pick.outputs.requested }}
+      ref: ${{ steps.pick.outputs.ref }}
     steps:
       - id: pick
         env:
@@ -40,83 +41,31 @@ jobs:
           if [ -n "$ref" ]; then
             # only what a git ref can be: no quotes or spaces reach the build
             case "$ref" in *[!A-Za-z0-9._/-]*) echo "invalid duckdb_ref: $ref" >&2; exit 1 ;; esac
-            echo "refs=[\"$ref\"]" >> "$GITHUB_OUTPUT"
+            echo "requested=1" >> "$GITHUB_OUTPUT"; echo "ref=$ref" >> "$GITHUB_OUTPUT"
           else
-            echo 'refs=["v2.0.1", "main"]' >> "$GITHUB_OUTPUT"
+            echo "requested=0" >> "$GITHUB_OUTPUT"; echo "ref=main" >> "$GITHUB_OUTPUT"
           fi
 
-  build:
-    needs: refs
-    strategy:
-      fail-fast: false
-      matrix:
-        duckdb_ref: ${{ fromJSON(needs.refs.outputs.refs) }}
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
-    name: duckdb ${{ matrix.duckdb_ref }} on ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          path: v2_capi_shim
+  # the contract itself, with the tooling of its release
+  release:
+    needs: ref
+    if: needs.ref.outputs.requested == '0'
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v2.0-cyanoptera
+    with:
+      duckdb_version: v2.0.1
+      ci_tools_version: v2.0-cyanoptera
+      extension_name: v2_capi_shim
+      exclude_archs: "windows_amd64;windows_amd64_mingw;windows_arm64;wasm_mvp;wasm_eh;wasm_threads"
 
-      - name: Tools
-        run: |
-          if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get update -qq && sudo apt-get install -y -qq ninja-build ccache; else brew install ninja ccache; fi
-
-      - name: DuckDB at ${{ matrix.duckdb_ref }}
-        env:
-          REF: ${{ matrix.duckdb_ref }}
-        run: |
-          git init -q duckdb && cd duckdb
-          git remote add origin https://github.com/duckdb/duckdb
-          git fetch -q --depth 1 origin "$REF" || git fetch -q origin "$REF"
-          git checkout -q FETCH_HEAD
-          git fetch -q --depth 1 origin 'refs/tags/*:refs/tags/*' 2>/dev/null || true
-          echo "DUCKDB_SHA=$(git rev-parse --short=10 HEAD)" >> "$GITHUB_ENV"
-          echo "duckdb_extension_load(v2_capi_shim SOURCE_DIR $GITHUB_WORKSPACE/v2_capi_shim)" > "$GITHUB_WORKSPACE/shim_config.cmake"
-
-      - uses: actions/cache@v4
-        with:
-          path: ${{ github.workspace }}/.ccache
-          key: ccache-${{ matrix.os }}-${{ matrix.duckdb_ref }}-${{ github.sha }}
-          restore-keys: ccache-${{ matrix.os }}-${{ matrix.duckdb_ref }}-
-
-      - name: Build DuckDB with v2_capi_shim
-        env:
-          CCACHE_DIR: ${{ github.workspace }}/.ccache
-        run: |
-          cd duckdb
-          cmake -G Ninja -S . -B build/release -DCMAKE_BUILD_TYPE=Release -DBUILD_UNITTESTS=0 \
-            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-            -DDUCKDB_EXTENSION_CONFIGS="$GITHUB_WORKSPACE/shim_config.cmake"
-          ninja -C build/release duckdb v2_capi_shim_loadable_extension
-
-      - name: Test
-        run: |
-          v2_capi_shim/tests/run.sh duckdb/build/release/duckdb \
-            duckdb/build/release/extension/v2_capi_shim/v2_capi_shim.duckdb_extension
-
-      - name: Name the artifact
-        env:
-          REF: ${{ matrix.duckdb_ref }}
-        run: |
-          D=duckdb/build/release/duckdb
-          echo "PLATFORM=$($D -csv -noheader -c 'PRAGMA platform')" >> "$GITHUB_ENV"
-          echo "SAFE_REF=$(printf '%s' "$REF" | tr '/' '-')" >> "$GITHUB_ENV"
-          # where INSTALL looks for it, by DuckDB's own rule: a release's version tag, else its source id
-          version=$($D -csv -noheader -c 'SELECT library_version FROM pragma_version()')
-          case "$version" in
-            v[0-9]*.[0-9]*.[0-9]*) case "$version" in *-*) dir=$($D -csv -noheader -c 'SELECT source_id FROM pragma_version()') ;; *) dir="$version" ;; esac ;;
-            *) dir=$($D -csv -noheader -c 'SELECT source_id FROM pragma_version()') ;;
-          esac
-          mkdir -p artifact
-          cp duckdb/build/release/extension/v2_capi_shim/v2_capi_shim.duckdb_extension artifact/
-          printf '%s\n%s\n%s\n' "$dir" "$($D -csv -noheader -c 'PRAGMA platform')" "$(git -C duckdb rev-parse HEAD)" > artifact/target.txt
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: v2_capi_shim-${{ env.SAFE_REF }}-${{ env.DUCKDB_SHA }}-${{ env.PLATFORM }}
-          path: artifact/
+  # main by default, or the requested ref, with current tooling
+  target:
+    needs: ref
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@main
+    with:
+      duckdb_version: ${{ needs.ref.outputs.ref }}
+      ci_tools_version: main
+      extension_name: v2_capi_shim
+      exclude_archs: "windows_amd64;windows_amd64_mingw;windows_arm64;wasm_mvp;wasm_eh;wasm_threads"
 
   # Asks carlopi/example-duckdb-extension-repository to publish this run's builds: it checks the run (listed producer,
   # succeeded, allowed branch), signs them with its own key, and commits them to its main, which GitHub Pages serves.
@@ -124,8 +73,8 @@ jobs:
   # fine-grained, Contents read and write on it only) and EXTENSION_REPO_PUBLISH_TOKEN (this producer's publish token,
   # whose SHA-256 that repository's sources.json lists). Not for pull requests; without the secrets it does nothing.
   notify:
-    needs: build
-    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch')
+    needs: [release, target]
+    if: always() && needs.target.result == 'success' && (needs.release.result == 'success' || needs.release.result == 'skipped') && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch')
     runs-on: ubuntu-latest
     steps:
       - name: Ask the extension repository to publish

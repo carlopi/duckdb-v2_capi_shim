@@ -38,9 +38,9 @@ the query was interrupted). See `src/include/shim_extra.h`.
 
 ## CI: build it for a given DuckDB
 
-`.github/workflows/build.yml` builds DuckDB at a ref with the shim, runs `tests/run.sh` (a v2 extension built against
-the contract, loaded through the shim; what the shim reports; what it refuses), and uploads
-`v2_capi_shim-<ref>-<duckdb sha>-<platform>` (linux and macOS). Which DuckDB:
+`.github/workflows/build.yml` builds the shim with extension-ci-tools' distribution workflow (DuckDB's own build
+images; Linux and macOS: `linux_amd64`, `linux_arm64`, `osx_amd64`, `osx_arm64`, and musl), runs `test/sql`, and uploads
+`v2_capi_shim-<duckdb version>-extension-<platform>`. Which DuckDB:
 
 - by hand: run the workflow with `duckdb_ref` (a tag, branch or commit)
 - by callback, e.g. from whatever publishes a DuckDB nightly or release:
@@ -65,7 +65,8 @@ its own key, and serves them (GitHub Pages) at `<version>/<platform>/v2_capi_shi
 | `generate.py`, `gen_shim.py`, `parse_header.py`, `compat_manual.c` | the generator, Python only, and the hand-written adapters |
 | `contracts/<version>/` | the contract: that release's `duckdb_v2.h`, `duckdb_extension_v2.h`, `api_spec/v2` (MIT, DuckDB) |
 | `pairs/` | values for parameters a target added, per contract and target |
-| `scripts/append_extension_metadata.py` | footer writer, from duckdb/extension-ci-tools (MIT) |
+| `duckdb/`, `extension-ci-tools/` | submodules: DuckDB at the contract (v2.0.1), and DuckDB's extension build tooling |
+| `Makefile`, `test/sql/` | the extension template's build (`make`, `make test`); `make test_shim` runs `tests/run.sh` |
 | `tests/` | `child.c` (a v2.0.1 extension) and `run.sh` |
 | `.github/workflows/build.yml` | CI |
 | `docs/design.md` | what the spike found: the diffs, the rules, the tests |

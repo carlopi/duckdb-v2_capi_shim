@@ -1,0 +1,30 @@
+# name: test/sql/v2_capi_shim.test
+# description: what the shim says about itself, and what it refuses (tests/run.sh loads a real v2.0.1 extension)
+# group: [v2_capi_shim]
+
+require v2_capi_shim
+
+query I
+SELECT contract FROM v2_capi_shim_info();
+----
+v2.0.1
+
+query I
+SELECT platform = (SELECT platform FROM pragma_platform()) FROM v2_capi_shim_info();
+----
+true
+
+query I
+SELECT name FROM v2_capi_shim_capabilities() ORDER BY name;
+----
+connections
+interrupts
+
+statement error
+SELECT * FROM load_extension('__does_not_exist__.duckdb_extension');
+----
+
+statement error
+SELECT * FROM install_and_load_extension('anything', 'no_such_repository');
+----
+unknown repository 'no_such_repository'

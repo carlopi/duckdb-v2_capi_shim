@@ -13,7 +13,7 @@ case "$(uname)" in Darwin) SHARED="-dynamiclib" ;; *) SHARED="-shared" ;; esac
 "$CC" -fPIC $SHARED -std=c11 -DDUCKDB_V2_API_ALLOW_UNSTABLE=1 -Wall -Werror -I "$ROOT/contracts/$CONTRACT" \
 	"$ROOT/tests/child.c" -o "$W/child.raw"
 mkdir -p "$W/stamped"
-python3 "$ROOT/scripts/append_extension_metadata.py" -l "$W/child.raw" -n child -o "$W/stamped/child.duckdb_extension" \
+python3 "$ROOT/extension-ci-tools/scripts/append_extension_metadata.py" -l "$W/child.raw" -n child -o "$W/stamped/child.duckdb_extension" \
 	-p "$PLATFORM" -dv "$CONTRACT" -ev v0.0.1 --abi-type C_STRUCT_UNSTABLE > /dev/null
 cp "$W/child.raw" "$W/unstamped.duckdb_extension"
 fail=0
