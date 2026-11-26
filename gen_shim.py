@@ -7,7 +7,7 @@ that keeps the contract's behaviour. Writes shim.c: one compat_<function> per co
 signature, implemented on the target's functions. Types the target changed or dropped are declared under compat_
 names; everything else is the target's own (identical) type. Functions needing hand-written adapters are listed and
 left to compat_manual.c."""
-import json, os, re
+import json, os, re, sys
 
 def load(p):
     fns, typedefs, records = {}, {}, {}
@@ -27,8 +27,14 @@ def load(p):
     walk(json.load(open(p)))
     return fns, typedefs, records
 
-old, old_td, old_rec = load('ast_old.json')
-new, new_td, new_rec = load('ast_new.json')
+if os.path.exists('ast_old.json'):  # the clang AST, when run.sh made one
+    old, old_td, old_rec = load('ast_old.json')
+    new, new_td, new_rec = load('ast_new.json')
+else:  # the headers themselves, with plain Python: CONTRACT_HEADER / TARGET_HEADER
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import parse_header
+    old, old_td, old_rec = parse_header.parse(os.environ['CONTRACT_HEADER'])
+    new, new_td, new_rec = parse_header.parse(os.environ['TARGET_HEADER'])
 defaults = json.load(open('defaults.json')) if os.path.exists('defaults.json') else {}
 
 # the contract's string struct, if the target no longer has it (or has it differently)

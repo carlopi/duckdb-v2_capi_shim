@@ -1,24 +1,22 @@
 #!/usr/bin/env bash
-# Spike: a compat layer serving the v2 C API of the contract (the duckdb submodule, v2.0.1) on top of the v2 C API of a
-# target DuckDB (default: upstream main). Generates the adapters, compiles them against the target's headers with type
-# checking enforced, builds the contract-layout function table against the contract's headers, and links the two.
-# Usage: tools/capi-compat/run.sh [target-git-ref]   (output in .cache/capi-compat/)
-# Any pair: CONTRACT_DIR / TARGET_DIR (DuckDB trees with src/include) and OUT override the defaults
+# Generates the compat layer for one pair: serves the v2 C API of a contract (contracts/<version>, default the
+# loader's: v2.0.1) on top of the v2 C API of a target DuckDB (TARGET_SRC, a DuckDB source tree). Diffs the two
+# surfaces from clang's AST, generates an adapter per contract function, compiles them against the target's headers
+# with type checking enforced, builds the contract-layout function table against the contract's headers, links them.
+# Usage: TARGET_SRC=/path/to/duckdb ./run.sh   (output in $OUT, default .cache/gen)
+#   CONTRACT=v2.0.0 for another contract; DEFAULTS=pairs/<file>.json for values of parameters the target added
 set -euo pipefail
-ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-TOOLS="$ROOT/tools/capi-compat"
-OUT="${OUT:-$ROOT/.cache/capi-compat}"
-REF="${1:-main}"
-CONTRACT="${CONTRACT_DIR:-$ROOT/duckdb}/src/include"
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+TOOLS="$ROOT"
+OUT="${OUT:-$ROOT/.cache/gen}"
+CONTRACT_NAME="${CONTRACT:-v2.0.1}"
+CONTRACT="$ROOT/contracts/$CONTRACT_NAME"
+[ -f "$CONTRACT/duckdb_v2.h" ] || { echo "no contract $CONTRACT_NAME in contracts/" >&2; exit 1; }
+: "${TARGET_SRC:?set TARGET_SRC to a DuckDB source tree (the target)}"
 mkdir -p "$OUT" && cd "$OUT"
-if [ -n "${TARGET_DIR:-}" ]; then
-	rm -rf target && ln -s "$TARGET_DIR" target
-elif [ ! -d target ]; then
-	git clone -q --depth 1 --branch "$REF" --filter=blob:none --sparse https://github.com/duckdb/duckdb target
-	git -C target sparse-checkout set --no-cone /src/include/duckdb_v2.h /src/include/duckdb_extension_v2.h /api_spec/v2
-fi
+rm -rf target && ln -s "$(cd "$TARGET_SRC" && pwd -P)" target
 TARGET="$OUT/target/src/include"
-echo "contract: $(git -C "${CONTRACT_DIR:-$ROOT/duckdb}" describe --tags 2>/dev/null || git -C "${CONTRACT_DIR:-$ROOT/duckdb}" rev-parse --short HEAD)  target: $(git -C target/ describe --tags 2>/dev/null || git -C target/ rev-parse --short HEAD)"
+echo "contract: $CONTRACT_NAME  target: $(git -C target/ describe --tags 2>/dev/null || git -C target/ rev-parse --short HEAD 2>/dev/null || echo "$TARGET_SRC")"
 echo '#include "duckdb_v2.h"' > probe.c
 clang -fsyntax-only -DDUCKDB_V2_API_ALLOW_UNSTABLE=1 -Xclang -ast-dump=json -I "$CONTRACT" probe.c > ast_old.json
 clang -fsyntax-only -DDUCKDB_V2_API_ALLOW_UNSTABLE=1 -Xclang -ast-dump=json -I "$TARGET" probe.c > ast_new.json
