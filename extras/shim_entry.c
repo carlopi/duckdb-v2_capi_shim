@@ -14,6 +14,10 @@ DUCKDB_EXTENSION_EXTERN
 
 extern const char compat_table[];        /* the v2.0.1-layout table (compat_table.c) */
 void shim_offer_all(duckdb_shim_offer_fn offer); /* shim_extra.cpp */
+bool shim_verify_child(duckdb_v2_context_handle ctx, const char *path, const char *repo, const char *contract, char *error, uint64_t cap);
+#ifndef SHIM_CONTRACT_VERSION
+#define SHIM_CONTRACT_VERSION "v2.0.1"
+#endif
 bool shim_invoke_child(duckdb_v2_context_handle ctx, const char *name, const char *path, void *lib, char *error, uint64_t cap);
 
 /* set when the child fetched its table: DuckDB refuses an extension that never does, and so does the loader */
@@ -102,6 +106,25 @@ static void load_bind(duckdb_v2_function_bind_info_handle info, duckdb_v2_table_
 	}
 	snprintf(buf, sizeof(buf), "%.*s", (int)path_len, path);
 	duckdb_v2_value_destroy(&arg);
+	char repo[256] = "";
+	idx_t repo_index = 0;
+	bool repo_found = false;
+	if (duckdb_v2_function_bind_get_arg_index(info, "repo", 4, &repo_index, &repo_found, NULL) == DUCKDB_V2_ERROR_NONE && repo_found) {
+		duckdb_v2_value_handle rv = NULL;
+		const char *r = NULL;
+		idx_t rl = 0;
+		if (duckdb_v2_function_bind_get_arg_value(info, repo_index, &rv, NULL) == DUCKDB_V2_ERROR_NONE &&
+		    duckdb_v2_value_get_varchar(rv, &r, &rl, NULL) == DUCKDB_V2_ERROR_NONE && r) {
+			snprintf(repo, sizeof(repo), "%.*s", (int)rl, r);
+		}
+		duckdb_v2_value_destroy(&rv);
+	}
+	if (!shim_verify_child(context, buf, repo, SHIM_CONTRACT_VERSION, error, sizeof(error))) {
+		char what[1200];
+		snprintf(what, sizeof(what), "refusing %s", buf);
+		report(err, what, error);
+		return;
+	}
 	child_init_fn init = NULL;
 	void *lib = open_child(buf, name, sizeof(name), &init, error, sizeof(error));
 	if (!lib) { report(err, buf, error); return; }
@@ -153,6 +176,11 @@ static void register_load_extension(duckdb_v2_extension_handle extension, duckdb
 	duckdb_v2_table_function_set_name(fn, "load_extension", 14, NULL);
 	duckdb_v2_table_function_get_signature(fn, &sig, NULL);
 	duckdb_v2_function_signature_add_parameter(sig, "path", 4, varchar, NULL, DUCKDB_V2_FUNCTION_PARAMETER_KIND_STANDARD, NULL);
+	/* the repository whose keys signed the file; NULL default, required unless allow_unsigned_extensions */
+	duckdb_v2_value_handle null_default = NULL;
+	duckdb_v2_value_create_null(factory, varchar, &null_default, NULL);
+	duckdb_v2_function_signature_add_parameter(sig, "repo", 4, varchar, null_default, DUCKDB_V2_FUNCTION_PARAMETER_KIND_NAMED_ONLY, NULL);
+	duckdb_v2_value_destroy(&null_default);
 	duckdb_v2_table_function_set_bind_callback(fn, load_bind, NULL);
 	duckdb_v2_table_function_set_exec_callback(fn, load_exec, NULL);
 	duckdb_v2_extension_register_table_function(extension, fn, NULL);
