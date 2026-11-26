@@ -70,6 +70,10 @@ its own key, and serves them (GitHub Pages) at `<version>/<platform>/v2_capi_shi
 
 `tests/run.sh <duckdb> <v2_capi_shim.duckdb_extension>` runs the same test against any build.
 
+`tests/sweep.py <duckdb git dir>` checks the same shim across DuckDB versions without building any: for every v2
+release and every `main` commit that changed `duckdb_v2.h`, it generates and compiles the adapters against that
+commit's headers. CI's `coverage` job puts its table in the run summary.
+
 ## Layout
 
 | | |
