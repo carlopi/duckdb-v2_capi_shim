@@ -14,7 +14,7 @@ DUCKDB_EXTENSION_EXTERN
 
 extern const char compat_table[];        /* the v2.0.1-layout table (compat_table.c) */
 void shim_offer_all(duckdb_shim_offer_fn offer); /* shim_extra.cpp */
-bool shim_invoke_child(duckdb_v2_context_handle ctx, const char *name, void *lib, char *error, uint64_t cap);
+bool shim_invoke_child(duckdb_v2_context_handle ctx, const char *name, const char *path, void *lib, char *error, uint64_t cap);
 
 /* get_api as the contract declares it: (extension, version), no length */
 static const void *contract_get_api(duckdb_v2_extension_handle extension, const char *version) {
@@ -94,7 +94,7 @@ static void load_bind(duckdb_v2_function_bind_info_handle info, duckdb_v2_table_
 	pending_child = init;
 	pending_lib = lib;
 	snprintf(pending_offer, sizeof(pending_offer), "%s_duckdb_shim_extra", name);
-	if (!shim_invoke_child(context, name, lib, error, sizeof(error))) { report(err, buf, error); return; }
+	if (!shim_invoke_child(context, name, buf, lib, error, sizeof(error))) { report(err, buf, error); return; }
 	duckdb_v2_factory_handle factory = NULL;
 	duckdb_v2_logical_type_handle varchar = NULL;
 	duckdb_v2_context_get_factory(context, &factory, NULL);

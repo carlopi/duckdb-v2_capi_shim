@@ -5,6 +5,8 @@
 #include "duckdb/main/capi_v2/capi_v2_internal.hpp"
 #include "duckdb/main/capi_v2/extension_load_v2.hpp"
 #include "duckdb/main/extension_helper.hpp"
+#include "duckdb/main/extension_manager.hpp"
+#include "duckdb/main/extension_install_info.hpp"
 
 #include <cstring>
 #include <string>
@@ -97,16 +99,31 @@ extern void shim_forward_child(::duckdb_v2_extension_input *input);
 
 //! Loads a child after the loader's own LOAD: DuckDB's own v2 invoker makes the extension handle (registration works
 //! through it as for any extension), the trampoline then hands the child the contract table instead of DuckDB's
-bool shim_invoke_child(struct _duckdb_v2_context *ctx, const char *name, void *lib, char *error,
+bool shim_invoke_child(struct _duckdb_v2_context *ctx, const char *name, const char *path, void *lib, char *error,
                        uint64_t error_capacity) {
 	try {
 		auto &context = ContextOf(ctx);
+		// recorded as loaded the way LOAD records an extension: duckdb_extensions() lists it, a second load is a no-op
+		auto load = ExtensionManager::Get(*context.db).BeginLoad(ExtensionLoadOptions(name));
+		if (!load) {
+			return true;
+		}
 		ExtensionInitResult init;
 		init.filename = name;
 		init.filebase = name;
 		init.abi_type = ExtensionABIType::C_STRUCT_UNSTABLE;
 		init.lib_hdl = lib;
-		InvokeCAPIV2Entrypoint(*context.db, init, name, shim_forward_child, &context, false);
+		try {
+			InvokeCAPIV2Entrypoint(*context.db, init, name, shim_forward_child, &context, false);
+		} catch (std::exception &ex) {
+			load->LoadFail(ErrorData(ex));
+			throw;
+		}
+		ExtensionInstallInfo install;
+		install.mode = ExtensionInstallMode::NOT_INSTALLED;
+		install.full_path = path;
+		install.version = "default-version";
+		load->FinishLoad(install, path);
 		return true;
 	} catch (std::exception &e) {
 		SetError(error, error_capacity, e.what());
