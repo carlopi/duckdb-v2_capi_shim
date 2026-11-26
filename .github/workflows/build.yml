@@ -8,7 +8,7 @@
 #       POST /repos/carlopi/duckdb-v2_capi_shim/dispatches
 #       {"event_type": "build-for-duckdb", "client_payload": {"duckdb_ref": "<sha or tag>"}}
 #     (event types duckdb-nightly and duckdb-release work the same)
-#   - push, pull_request, schedule: main (where the v2 C API moves; a new release comes in by callback, duckdb-release)
+#   - push, pull_request, schedule: the heads of v2.0-cyanoptera (DuckDB's 2.0.x release branch) and main
 name: build
 
 on:
@@ -26,42 +26,67 @@ on:
     - cron: "17 3 * * *"
 
 jobs:
-  # The requested ref (default main) resolved to what extension-ci-tools needs: duckdb_commit is checked out,
-  # duckdb_version is stamped into the footer verbatim, so it must be what that DuckDB calls itself: a release's tag, or
-  # for anything else the commit's first 10 characters (DuckDB's source id, the directory INSTALL looks in)
+  # Which DuckDBs: by default the heads of the two lines this shim supports, v2.0-cyanoptera (the 2.0.x release branch,
+  # with its own tooling) and main; a requested ref goes to the line it belongs to (v2.0.x tags and the branch itself to
+  # v2.0-cyanoptera, anything else to main). Each resolved to what extension-ci-tools needs: duckdb_commit is checked
+  # out, duckdb_version is stamped into the footer verbatim, so it must be what that DuckDB calls itself: a release's
+  # tag, or for anything else the commit's first 10 characters (DuckDB's source id, the directory INSTALL looks in)
   ref:
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.pick.outputs.version }}
-      commit: ${{ steps.pick.outputs.commit }}
+      cyanoptera: ${{ steps.pick.outputs.cyanoptera }}
+      cyanoptera_version: ${{ steps.pick.outputs.cyanoptera_version }}
+      cyanoptera_commit: ${{ steps.pick.outputs.cyanoptera_commit }}
+      main: ${{ steps.pick.outputs.main }}
+      main_version: ${{ steps.pick.outputs.main_version }}
+      main_commit: ${{ steps.pick.outputs.main_commit }}
     steps:
       - id: pick
         env:
           INPUT_REF: ${{ github.event.inputs.duckdb_ref }}
           PAYLOAD_REF: ${{ github.event.client_payload.duckdb_ref }}
           GH_TOKEN: ${{ github.token }}
-          DEFAULT_REF: main
         run: |
+          resolve() { # resolve <line> <ref>
+            if printf '%s' "$2" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+              echo "$1_version=$2" >> "$GITHUB_OUTPUT"; echo "$1_commit=" >> "$GITHUB_OUTPUT"; echo "$1: DuckDB $2 (release)"
+            else
+              sha=$(gh api "repos/duckdb/duckdb/commits/$2" --jq .sha)
+              echo "$1_version=${sha:0:10}" >> "$GITHUB_OUTPUT"; echo "$1_commit=$sha" >> "$GITHUB_OUTPUT"; echo "$1: DuckDB $2 = $sha"
+            fi
+            echo "$1=1" >> "$GITHUB_OUTPUT"
+          }
           ref="${INPUT_REF:-$PAYLOAD_REF}"
-          ref="${ref:-$DEFAULT_REF}"
+          if [ -z "$ref" ]; then
+            resolve cyanoptera v2.0-cyanoptera; resolve main main; exit 0
+          fi
           # only what a git ref can be: no quotes or spaces reach the build
           case "$ref" in *[!A-Za-z0-9._/-]*) echo "invalid duckdb_ref: $ref" >&2; exit 1 ;; esac
-          if printf '%s' "$ref" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "version=$ref" >> "$GITHUB_OUTPUT"; echo "commit=" >> "$GITHUB_OUTPUT"
-            echo "DuckDB $ref (release)"
-          else
-            sha=$(gh api "repos/duckdb/duckdb/commits/$ref" --jq .sha)
-            echo "version=${sha:0:10}" >> "$GITHUB_OUTPUT"; echo "commit=$sha" >> "$GITHUB_OUTPUT"
-            echo "DuckDB $ref = $sha"
-          fi
+          case "$ref" in
+            v2.0.*|v2.0-cyanoptera) resolve cyanoptera "$ref"; echo "main=0" >> "$GITHUB_OUTPUT" ;;
+            *) resolve main "$ref"; echo "cyanoptera=0" >> "$GITHUB_OUTPUT" ;;
+          esac
 
-  # main by default, or the requested ref, with current tooling
-  target:
+  cyanoptera:
     needs: ref
+    if: needs.ref.outputs.cyanoptera == '1'
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v2.0-cyanoptera
+    with:
+      duckdb_version: ${{ needs.ref.outputs.cyanoptera_version }}
+      duckdb_commit: ${{ needs.ref.outputs.cyanoptera_commit }}
+      ci_tools_version: v2.0-cyanoptera
+      extension_name: v2_capi_shim
+      exclude_archs: "windows_amd64;windows_amd64_mingw;windows_arm64;wasm_mvp;wasm_eh;wasm_threads"
+      # opt-in in extension-ci-tools' matrix
+      opt_in_archs: "osx_amd64"
+
+  main:
+    needs: ref
+    if: needs.ref.outputs.main == '1'
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@main
     with:
-      duckdb_version: ${{ needs.ref.outputs.version }}
-      duckdb_commit: ${{ needs.ref.outputs.commit }}
+      duckdb_version: ${{ needs.ref.outputs.main_version }}
+      duckdb_commit: ${{ needs.ref.outputs.main_commit }}
       ci_tools_version: main
       extension_name: v2_capi_shim
       exclude_archs: "windows_amd64;windows_amd64_mingw;windows_arm64;wasm_mvp;wasm_eh;wasm_threads"
@@ -92,8 +117,8 @@ jobs:
   # fine-grained, Contents read and write on it only) and EXTENSION_REPO_PUBLISH_TOKEN (this producer's publish token,
   # whose SHA-256 that repository's sources.json lists). Not for pull requests; without the secrets it does nothing.
   notify:
-    needs: target
-    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch')
+    needs: [cyanoptera, main]
+    if: always() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch')
     runs-on: ubuntu-latest
     steps:
       - name: Ask the extension repository to publish

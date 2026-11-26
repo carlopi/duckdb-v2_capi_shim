@@ -24,9 +24,17 @@ def refs_to_sweep(repo):
     tags = [t for t in git(repo, 'tag', '--list', 'v2.*').split() if re.fullmatch(r'v2\.\d+\.\d+', t)]
     tags.sort(key=lambda t: [int(x) for x in t[1:].split('.')])
     base = tags[0] if tags else 'origin/main~200'
-    commits = git(repo, 'log', '--first-parent', '--reverse', '--format=%H', base + '..origin/main', '--',
-                  'src/include/duckdb_v2.h').split()
-    return tags + commits
+    refs = list(tags)
+    for branch in ('origin/v2.0-cyanoptera', 'origin/main'):
+        try:
+            git(repo, 'rev-parse', '--verify', '-q', branch)
+        except subprocess.CalledProcessError:
+            continue
+        refs += git(repo, 'log', '--first-parent', '--reverse', '--format=%H', base + '..' + branch, '--',
+                    'src/include/duckdb_v2.h').split()
+        refs.append(branch)  # its head, whatever it touched
+    seen = set()
+    return [r for r in refs if not (r in seen or seen.add(r))]
 
 
 def sweep_one(repo, ref):
@@ -68,14 +76,14 @@ def main():
     repo = sys.argv[1]
     refs = sys.argv[2:] or refs_to_sweep(repo)
     failures = 0
-    print('%-12s %-10s %-26s %-9s %s' % ('ref', 'date', 'contract ' + CONTRACT + ' served by', 'result', 'detail'))
+    print('%-16s %-10s %-26s %-9s %s' % ('ref', 'date', 'contract ' + CONTRACT + ' served by', 'result', 'detail'))
     for ref in refs:
         date = git(repo, 'log', '-1', '--format=%cs', ref).strip()
         result, stats, detail = sweep_one(repo, ref)
         nums = re.findall(r'\d+', stats)
         counts = '%s fwd %s gen %s hand' % tuple(nums) if len(nums) == 3 else ''
-        name = ref if ref.startswith('v') else ref[:10]
-        print('%-12s %-10s %-26s %-9s %s' % (name, date, counts, result, detail), flush=True)
+        name = ref if ref.startswith('v') else ref.replace('origin/', '') if ref.startswith('origin/') else ref[:10]
+        print('%-16s %-10s %-26s %-9s %s' % (name, date, counts, result, detail), flush=True)
         failures += result not in ('ok', 'no-v2')
     sys.exit(1 if failures else 0)
 

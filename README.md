@@ -60,8 +60,9 @@ images; Linux and macOS: `linux_amd64`, `linux_arm64`, `osx_amd64`, `osx_arm64`,
   `POST /repos/carlopi/duckdb-v2_capi_shim/dispatches` with
   `{"event_type": "build-for-duckdb", "client_payload": {"duckdb_ref": "<sha or tag>"}}`
   (`duckdb-nightly`, `duckdb-release` work the same; the sender needs a token allowed to dispatch to this repository)
-- otherwise (push, pull request, nightly schedule): `main`, where the v2 C API moves; a new release comes in by
-  callback (`duckdb-release` with its tag)
+- otherwise (push, pull request, nightly schedule): the heads of the two lines the shim supports,
+  `v2.0-cyanoptera` (DuckDB's 2.0.x release branch, with its own tooling) and `main`; a requested ref goes to the line
+  it belongs to
 
 Builds on `main` (and by hand or callback) are then published: the `notify` job asks
 `carlopi/example-duckdb-extension-repository` to publish the run; that repository checks the run, signs the builds with
