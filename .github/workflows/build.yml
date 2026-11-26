@@ -40,9 +40,12 @@ jobs:
           INPUT_REF: ${{ github.event.inputs.duckdb_ref }}
           PAYLOAD_REF: ${{ github.event.client_payload.duckdb_ref }}
           GH_TOKEN: ${{ github.token }}
+          # main, pinned for now: main's v2 C API moved table function scans onto data sources (#29411, 9d0061c3),
+          # which the bridge does not cover yet; 7f81a8e8 is the commit just before. Back to main once it does
+          DEFAULT_REF: 7f81a8e8ba5836415f1219976537ed850a7065c5
         run: |
           ref="${INPUT_REF:-$PAYLOAD_REF}"
-          ref="${ref:-main}"
+          ref="${ref:-$DEFAULT_REF}"
           # only what a git ref can be: no quotes or spaces reach the build
           case "$ref" in *[!A-Za-z0-9._/-]*) echo "invalid duckdb_ref: $ref" >&2; exit 1 ;; esac
           if printf '%s' "$ref" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
